@@ -26,7 +26,7 @@ if __name__ == "__main__":
     # Size of the noise vector
     noise_dim = 128
     # Set the number of epochs for training.
-    epochs = 2000
+    epochs = 5  # REVIEW: for now, train for a very small number of epochs
     
     # Load the MNIST dataset
     (train_images, train_labels), (test_images, test_labels) = keras.datasets.mnist.load_data()
@@ -51,9 +51,14 @@ if __name__ == "__main__":
     # add a singleton layer to the end of the train images
     train_images = np.expand_dims(train_images, axis=-1)
     
+    # REVIEW: for now, train using only 10% of the data
+    percentage = 0.1
+    train_images = train_images[:int(percentage * len(train_images))]
+    train_labels = train_labels[:int(percentage * len(train_labels))]
+    
     # Print the shapes to verify
-    print("Shape of train_images_7:", train_images.shape)
-    print("Shape of train_labels_7:", train_labels.shape)
+    print("Shape of train_images:", train_images.shape)
+    print("Shape of train_labels:", train_labels.shape)
     
     # Check that all labels are the same
     unique_labels = np.unique(train_labels)
