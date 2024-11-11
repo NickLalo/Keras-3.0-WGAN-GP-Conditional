@@ -1,0 +1,49 @@
+# This file can be used to create a conda environment and install the listed packages to run the code in this project. If you are on a windows machine,
+# you will need to run this on WSL to install the GPU versions of the libraries.
+
+# To create the environment, run: (this can take some time to run)
+# 
+#     conda env create -f _configs/environment.yaml
+#
+# After creating the environment, activate it using:
+#
+#     conda activate keras-gan-gpu
+#
+# If you need to delete the environment, run:
+#
+#     STEP 1.
+#         conda deactivate
+#     STEP 2.
+#         conda env remove --name keras-gan-gpu
+#
+# This will set up your environment with the specified dependencies.
+
+name: keras-gan-gpu
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - matplotlib
+      - pandas
+      - scikit-learn
+      - tensorflow[and-cuda]
+      # - jax[cuda12]
+      # - jaxlib
+      - keras
+      - pyyaml
+      - mlflow
+      - tqdm
+      - jupyter 
+      - ipykernel
+      - notebook
+      - ipywidgets
+      - pynvml  # library to check GPU usage
+      - graphviz
+      - pydot
+      - nvidia-pyindex  # Add NVIDIA's Python index to access their pip packages
+      - nvidia-tensorrt  # Install TensorRT via pip
+      - nvidia-ml-py3  # library to check GPU usage
+      - imageio

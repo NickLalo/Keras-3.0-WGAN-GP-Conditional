@@ -3,6 +3,7 @@ model definitions and callbacks
 """
 
 
+import os
 import numpy as np
 import keras
 import tensorflow as tf
@@ -173,6 +174,7 @@ class WGAN(keras.Model):
         self.latent_dim = latent_dim
         self.d_steps = discriminator_extra_steps
         self.gp_weight = gp_weight
+        return
     
     def compile(self, d_optimizer, g_optimizer, d_loss_fn, g_loss_fn):
         super().compile()
@@ -180,6 +182,7 @@ class WGAN(keras.Model):
         self.g_optimizer = g_optimizer
         self.d_loss_fn = d_loss_fn
         self.g_loss_fn = g_loss_fn
+        return
     
     def gradient_penalty(self, batch_size, real_images, fake_images):
         """Calculates the gradient penalty.
@@ -303,6 +306,14 @@ class GANMonitor(keras.callbacks.Callback):
         plt.tight_layout()
         plt.savefig(f"data/generated_grid_epoch_{epoch:04d}.png", dpi=200)
         plt.close()
+        
+        ######################### PLOT LOSSES #########################
+        # Ensure save directory exists
+        loss_plot_save_dir = "loss_plots"
+        os.makedirs(loss_plot_save_dir, exist_ok=True)
+        
+        # TODO: plot the losses
+        
         return
     
     def on_train_end(self, logs=None):

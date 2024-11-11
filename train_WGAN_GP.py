@@ -22,7 +22,7 @@ if __name__ == "__main__":
     #-------------------------------
     ### HYPERPARAMETERS
     #-------------------------------
-    batch_size = 512
+    batch_size = 256
     # Size of the noise vector
     noise_dim = 128
     # Set the number of epochs for training.
@@ -42,29 +42,21 @@ if __name__ == "__main__":
     train_images = np.concatenate((train_images, test_images), axis=0)
     train_labels = np.concatenate((train_labels, test_labels), axis=0)
     
-    # Filter the dataset to only include images of the number 7
-    # The following line creates a boolean array where each element is True if the corresponding label is 7, and False otherwise.
-    # This boolean array is then used to filter the images and labels, keeping only those where the label is 7.
-    train_filter = train_labels == 7
-    
-    train_images_7 = train_images[train_filter]
-    train_labels_7 = train_labels[train_filter]
-    
     # Scale the images to the range [-1, 1]
     # Original pixel values are in the range [0, 255].
     # To scale them to [-1, 1], we subtract 127.5 (which centers the values around 0)
     # and then divide by 127.5 (which scales the values to be between -1 and 1).
-    train_images_7 = (train_images_7.astype(np.float32) - 127.5) / 127.5
+    train_images = (train_images.astype(np.float32) - 127.5) / 127.5
     
     # add a singleton layer to the end of the train images
-    train_images_7 = np.expand_dims(train_images_7, axis=-1)
+    train_images = np.expand_dims(train_images, axis=-1)
     
     # Print the shapes to verify
-    print("Shape of train_images_7:", train_images_7.shape)
-    print("Shape of train_labels_7:", train_labels_7.shape)
+    print("Shape of train_images_7:", train_images.shape)
+    print("Shape of train_labels_7:", train_labels.shape)
     
     # Check that all labels are the same
-    unique_labels = np.unique(train_labels_7)
+    unique_labels = np.unique(train_labels)
     print("Unique labels in the dataset:", unique_labels)
     
     # make the data folder if it doesn't exist
@@ -98,14 +90,14 @@ if __name__ == "__main__":
         return -tf.reduce_mean(fake_img)
     
     # Instantiate the customer `GANMonitor` Keras callback.
-    cbk = GANMonitor(num_img=20, latent_dim=noise_dim, grid_size=(4, 5))
+    callback = GANMonitor(num_img=20, latent_dim=noise_dim, grid_size=(4, 5))
     
     # Get the wgan model
     wgan = WGAN(
         discriminator=d_model,
         generator=g_model,
         latent_dim=noise_dim,
-        discriminator_extra_steps=3,
+        discriminator_extra_steps=5,  # was set to 3, but I think 5 is recommended
         )
     
     # Compile the wgan model
@@ -118,10 +110,10 @@ if __name__ == "__main__":
     
     # Start training
     wgan.fit(
-        train_images_7, 
+        train_images, 
         batch_size=batch_size, 
         epochs=epochs, 
-        callbacks=[cbk]
+        callbacks=[callback]
         )
     
     script_end_time = time.time()

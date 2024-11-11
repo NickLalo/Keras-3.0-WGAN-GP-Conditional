@@ -2,3 +2,7 @@
 __pycache__/
 data/
 delete_me_later/
+
+# ignore all files and folders that start with zz_ (personal naming convention for temporary files)
+zz_*
+zz_*/
