@@ -167,6 +167,7 @@ class WGAN(keras.Model):
         latent_dim,
         discriminator_extra_steps=3,
         gp_weight=10.0,
+        batch_size=256,
     ):
         super().__init__()
         self.discriminator = discriminator
@@ -210,7 +211,7 @@ class WGAN(keras.Model):
         if isinstance(real_images, tuple):
             real_images = real_images[0]
         # Get the batch size
-        batch_size = tf.shape(real_images)[0]
+        batch_size = self.batch_size
         
         # For each batch, we are going to perform the
         # following steps as laid out in the original paper:
