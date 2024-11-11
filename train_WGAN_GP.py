@@ -98,6 +98,7 @@ if __name__ == "__main__":
         generator=g_model,
         latent_dim=noise_dim,
         discriminator_extra_steps=5,  # was set to 3, but I think 5 is recommended
+        batch_size=batch_size
         )
     
     # Compile the wgan model

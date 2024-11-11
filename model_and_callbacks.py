@@ -1,5 +1,8 @@
 """
 model definitions and callbacks
+
+Implementation modified from following this tutorial:
+https://keras.io/examples/generative/wgan_gp/
 """
 
 
@@ -175,6 +178,7 @@ class WGAN(keras.Model):
         self.latent_dim = latent_dim
         self.d_steps = discriminator_extra_steps
         self.gp_weight = gp_weight
+        self.batch_size = batch_size
         return
     
     def compile(self, d_optimizer, g_optimizer, d_loss_fn, g_loss_fn):
