@@ -1,8 +1,11 @@
 .vscode/
 __pycache__/
-data/
-delete_me_later/
 
 # ignore all files and folders that start with zz_ (personal naming convention for temporary files)
 zz_*
 zz_*/
+delete_me_later/
+
+# ignore folders that could store tons of data that shouldn't be tracked by git
+data/
+loss_plots/

@@ -14,7 +14,7 @@ import tensorflow as tf
 from keras import layers
 import matplotlib.pyplot as plt
 
-from model_and_callbacks import get_discriminator_model, get_generator_model, GANMonitor, WGAN
+from model_and_callbacks import get_discriminator_model, get_generator_model, GANMonitor, LossLogger, WGAN_GP
 
 
 if __name__ == "__main__":
@@ -71,10 +71,10 @@ if __name__ == "__main__":
     for file in os.listdir("data"):
         os.remove(f"data/{file}")
     
-    d_model = get_discriminator_model(img_shape)
+    disc_model = get_discriminator_model(img_shape)
     # d_model.summary()
     
-    g_model = get_generator_model(noise_dim)
+    gen_model = get_generator_model(noise_dim)
     # g_model.summary()
     
     # Instantiate the optimizer for both networks
@@ -94,31 +94,35 @@ if __name__ == "__main__":
     def generator_loss(fake_img):
         return -tf.reduce_mean(fake_img)
     
-    # Instantiate the customer `GANMonitor` Keras callback.
-    callback = GANMonitor(num_img=20, latent_dim=noise_dim, grid_size=(4, 5))
+    # Initialize the customer `GANMonitor` Keras callback to view generated images at the end of every epoch
+    gan_monitor_callback = GANMonitor(num_img=20, latent_dim=noise_dim, grid_size=(4, 5))
+    # Initialize a custom LossLogger callback to log metrics at the end of every epoch
+    loss_logger_callback = LossLogger(samples_per_epoch=train_images.shape[0])
     
     # Get the wgan model
-    wgan = WGAN(
-        discriminator=d_model,
-        generator=g_model,
+    wgan = WGAN_GP(
+        discriminator=disc_model,
+        generator=gen_model,
         latent_dim=noise_dim,
         discriminator_extra_steps=5,  # was set to 3, but I think 5 is recommended
         )
     
     # Compile the wgan model
     wgan.compile(
-        d_optimizer=discriminator_optimizer,
-        g_optimizer=generator_optimizer,
-        g_loss_fn=generator_loss,
-        d_loss_fn=discriminator_loss,
+        disc_optimizer=discriminator_optimizer,
+        gen_optimizer=generator_optimizer,
+        disc_loss_fn=discriminator_loss,
+        gen_loss_fn=generator_loss,
         )
     
     # Start training
     wgan.fit(
         train_images, 
-        batch_size=batch_size, 
+        batch_size=batch_size,
         epochs=epochs, 
-        callbacks=[callback]
+        callbacks=[
+            gan_monitor_callback,
+            loss_logger_callback]
         )
     
     script_end_time = time.time()
