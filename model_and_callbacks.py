@@ -5,6 +5,7 @@ model definitions and callbacks
 
 import os
 import time
+import json
 import numpy as np
 import pandas as pd
 import keras
@@ -299,6 +300,47 @@ class WGAN_GP(keras.Model):
         
         #  "disc_loss_real", "disc_loss_fake",
         return {"disc_loss": disc_loss, "gen_loss": gen_loss, "disc_loss_real": avg_real_score, "disc_loss_fake": avg_fake_score, "disc_loss_gp": avg_gradient_penalty}
+    
+    def save_model(self, path):
+        # Create the save directory if it doesn't exist
+        os.makedirs(path, exist_ok=True)
+        
+        # Save the generator and discriminator models separately
+        self.generator.save(os.path.join(path, 'generator_model.keras'))
+        self.discriminator.save(os.path.join(path, 'discriminator_model.keras'))
+        
+        # Save any other configurations in a JSON file
+        config = {
+            "latent_dim": self.latent_dim,
+            "num_disc_steps": self.num_disc_steps,
+            "gp_weight": self.gp_weight,
+        }
+        with open(os.path.join(path, 'config.json'), 'w') as f:
+            json.dump(config, f)
+        
+        print(f"Model saved successfully at {path}")
+    
+    @classmethod
+    def load_model(cls, path):
+        # Load the generator and discriminator models
+        generator = keras.models.load_model(os.path.join(path, 'generator_model.keras'))
+        discriminator = keras.models.load_model(os.path.join(path, 'discriminator_model.keras'))
+        
+        # Load the configuration
+        with open(os.path.join(path, 'config.json'), 'r') as f:
+            config = json.load(f)
+        
+        # Initialize the WGAN_GP model with loaded components and config
+        model = cls(
+            discriminator=discriminator,
+            generator=generator,
+            latent_dim=config["latent_dim"],
+            discriminator_extra_steps=config["num_disc_steps"],
+            gp_weight=config["gp_weight"],
+        )
+        
+        print(f"Model loaded successfully from {path}")
+        return model
 
 
 class GANMonitor(keras.callbacks.Callback):
@@ -388,9 +430,11 @@ class LossLogger(tf.keras.callbacks.Callback):
         disc_loss_fake = logs["disc_loss_fake"]
         disc_loss_gp = logs["disc_loss_gp"]
         gen_loss = logs["gen_loss"]
+        # start epoch count from 1 as we are saying: "These are metrics at the end of one epoch" for the first epoch
+        epoch = epoch + 1
         
         # print the metrics
-        print(f"/nEpoch: {epoch}")
+        print(f"\nEpoch: {epoch}")
         print(f"Discriminator Loss: {disc_loss:.4f}")
         print(f"Discriminator Loss (Real): {disc_loss_real:.4f}")
         print(f"Discriminator Loss (Fake): {disc_loss_fake:.4f}")

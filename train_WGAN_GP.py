@@ -99,24 +99,49 @@ if __name__ == "__main__":
     # Initialize a custom LossLogger callback to log metrics at the end of every epoch
     loss_logger_callback = LossLogger(samples_per_epoch=train_images.shape[0])
     
-    # Get the wgan model
-    wgan = WGAN_GP(
+    # Get the wgan_gp model
+    wgan_gp = WGAN_GP(
         discriminator=disc_model,
         generator=gen_model,
         latent_dim=noise_dim,
         discriminator_extra_steps=5,  # was set to 3, but I think 5 is recommended
         )
     
-    # Compile the wgan model
-    wgan.compile(
+    # Compile the wgan_gp model
+    wgan_gp.compile(
         disc_optimizer=discriminator_optimizer,
         gen_optimizer=generator_optimizer,
         disc_loss_fn=discriminator_loss,
         gen_loss_fn=generator_loss,
         )
     
-    # Start training
-    wgan.fit(
+    # REVIEW: model testing
+    # save the model using custom save method
+    wgan_gp.save_model("wgan_gp_model")
+    
+    # TODO: I have to compile the model after loading it in
+    # TODO: do I need to save the optimizer state as well?
+    # load the model using custom load method
+    loaded_wgan_gp = WGAN_GP.load_model("wgan_gp_model")
+    
+    # REVIEW: if I am reinitializing the model, would rebuilding the optimizers cause the checkpoint to train differently and not pick back up correctly?
+    #   The optimizer state should be saved and loaded as well.
+    #   OR I should investigate if I can reload the model in a way that doesn't require recompiling the model.
+    loaded_wgan_gp.compile(
+        disc_optimizer=discriminator_optimizer,
+        gen_optimizer=generator_optimizer,
+        disc_loss_fn=discriminator_loss,
+        gen_loss_fn=generator_loss,
+        )
+    
+    random_latent_vectors = tf.random.normal(shape=(20, noise_dim))
+    assert np.allclose(wgan_gp.generator(random_latent_vectors, training=False), loaded_wgan_gp.generator(random_latent_vectors, training=False))
+    
+    # REVIEW: remove this code after testing model save is complete
+    print("initial assertion for saving/load new model passed!\n")
+    
+    # Start training the loaded model to see if we run into any errors with reloading the model
+    wgan_gp.fit(
         train_images, 
         batch_size=batch_size,
         epochs=epochs, 
@@ -124,6 +149,16 @@ if __name__ == "__main__":
             gan_monitor_callback,
             loss_logger_callback]
         )
+    
+    # # Start training
+    # wgan_gp.fit(
+    #     train_images, 
+    #     batch_size=batch_size,
+    #     epochs=epochs, 
+    #     callbacks=[
+    #         gan_monitor_callback,
+    #         loss_logger_callback]
+    #     )
     
     script_end_time = time.time()
     time_hours = int((script_end_time - script_start_time) // 3600)
