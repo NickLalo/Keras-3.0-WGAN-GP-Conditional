@@ -4,8 +4,12 @@ __pycache__/
 # ignore all files and folders that start with zz_ (personal naming convention for temporary files)
 zz_*
 zz_*/
+
+# ignore other temporary files that I don't want to track
 delete_me_later/
+wgan_gp_model.keras
 
 # ignore folders that could store tons of data that shouldn't be tracked by git
 data/
 loss_plots/
+wgan_gp_model/

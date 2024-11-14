@@ -18,6 +18,10 @@ import imageio
 import glob
 
 
+# Clear all previously registered custom objects
+keras.saving.get_custom_objects().clear()
+
+
 def conv_block(
         x,
         filters,
@@ -41,6 +45,7 @@ def conv_block(
     return x
 
 
+@keras.saving.register_keras_serializable(package="generator_model", name="generator_model")
 def get_discriminator_model(img_shape):
     img_input = layers.Input(shape=img_shape)
     # Zero pad the input to make the input images size to (32, 32, 1).
@@ -94,8 +99,8 @@ def get_discriminator_model(img_shape):
     x = layers.Dropout(0.2)(x)
     x = layers.Dense(1)(x)
     
-    d_model = keras.models.Model(img_input, x, name="discriminator")
-    return d_model
+    disc_model = keras.models.Model(img_input, x, name="discriminator")
+    return disc_model
 
 
 def upsample_block(
@@ -126,6 +131,7 @@ def upsample_block(
     return x
 
 
+@keras.saving.register_keras_serializable(package="generator_model", name="generator_model")
 def get_generator_model(noise_dim):
     noise = layers.Input(shape=(noise_dim,))
     x = layers.Dense(4 * 4 * 256, use_bias=False)(noise)
@@ -160,9 +166,35 @@ def get_generator_model(noise_dim):
     # We will use a Cropping2D layer to make it (28, 28, 1).
     x = layers.Cropping2D((2, 2))(x)
     
-    g_model = keras.models.Model(noise, x, name="generator")
-    return g_model
+    gen_model = keras.models.Model(noise, x, name="generator")
+    return gen_model
 
+
+@keras.saving.register_keras_serializable(package="discriminator_loss", name="discriminator_loss")
+def discriminator_loss(real_img, fake_img):
+    # Define the loss functions for the discriminator,
+    # which should be (fake_loss - real_loss).
+    # We will add the gradient penalty later to this loss function.
+    real_loss = tf.reduce_mean(real_img)
+    fake_loss = tf.reduce_mean(fake_img)
+    return fake_loss - real_loss
+
+
+@keras.saving.register_keras_serializable(package="generator_loss", name="generator_loss")
+def generator_loss(fake_img):
+    # Define the loss functions for the generator.
+    return -tf.reduce_mean(fake_img)
+
+
+@keras.saving.register_keras_serializable(package="discriminator_optimizer", name="discriminator_optimizer")
+def get_discriminator_optimizer():
+    discriminator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
+    return discriminator_optimizer
+
+@keras.saving.register_keras_serializable(package="generator_optimizer", name="generator_optimizer")
+def get_generator_optimizer():
+    generator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
+    return generator_optimizer
 
 class WGAN_GP(keras.Model):
     """
@@ -173,24 +205,44 @@ class WGAN_GP(keras.Model):
         discriminator,
         generator,
         latent_dim,
+        disc_optimizer,
+        gen_optimizer,
+        disc_loss_fn,
+        gen_loss_fn,
         discriminator_extra_steps=3,
         gp_weight=10.0,
+        # TODO: adding some code to allow reloading to pass relevant parameters to the model
+        **kwargs
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self.discriminator = discriminator
         self.generator = generator
         self.latent_dim = latent_dim
         # in a WGAN-GP, the discriminator trains for a number of steps and then generator trains for one step
         self.num_disc_steps = discriminator_extra_steps
         self.gp_weight = gp_weight
-        return
-    
-    def compile(self, disc_optimizer, gen_optimizer, disc_loss_fn, gen_loss_fn):
-        super().compile()
+        
+        # REVIEW: moving these here so I can see if this is the right place to put them
         self.disc_optimizer = disc_optimizer
         self.gen_optimizer = gen_optimizer
         self.disc_loss_fn = disc_loss_fn
         self.gen_loss_fn = gen_loss_fn
+        
+        # set dummy value for self.optimizer avoid errors at the end of .fit() call
+        self.optimizer = None
+        
+        return
+    
+    # def compile(self, disc_optimizer, gen_optimizer, disc_loss_fn, gen_loss_fn):
+    def compile(self):
+        super().compile()
+        # REVIEW: should I do something with these for saving and loading?
+        # REVIEW: I could move the saving of these attributes to the __init__, but I don't know how that would effect the .compile()??
+        # REVIEW: ask chatGPT: do the setting of these attributes have to be done after the super().compile()?
+        # self.disc_optimizer = disc_optimizer
+        # self.gen_optimizer = gen_optimizer
+        # self.disc_loss_fn = disc_loss_fn
+        # self.gen_loss_fn = gen_loss_fn
         return
     
     def gradient_penalty(self, batch_size, real_images, fake_images):
@@ -270,9 +322,8 @@ class WGAN_GP(keras.Model):
             # Get the gradients for the discriminator loss
             disc_gradient = tape.gradient(disc_loss, self.discriminator.trainable_variables)
             # Update the discriminator's weights
-            self.disc_optimizer.apply_gradients(
-                zip(disc_gradient, self.discriminator.trainable_variables)
-            )
+            self.disc_optimizer.apply_gradients(zip(disc_gradient, self.discriminator.trainable_variables))
+
         
         # Train the generator
         # Generate a new batch of random latent vectors
@@ -289,9 +340,7 @@ class WGAN_GP(keras.Model):
         # Get the gradients for the generator loss
         gen_gradient = tape.gradient(gen_loss, self.generator.trainable_variables)
         # Update the generator's weights
-        self.gen_optimizer.apply_gradients(
-            zip(gen_gradient, self.generator.trainable_variables)
-        )
+        self.gen_optimizer.apply_gradients(zip(gen_gradient, self.generator.trainable_variables))
         
         # # Calculate the average scores for real and fake images for this batch
         avg_real_score = tf.reduce_mean(discriminator_real_scores)
@@ -301,45 +350,44 @@ class WGAN_GP(keras.Model):
         #  "disc_loss_real", "disc_loss_fake",
         return {"disc_loss": disc_loss, "gen_loss": gen_loss, "disc_loss_real": avg_real_score, "disc_loss_fake": avg_fake_score, "disc_loss_gp": avg_gradient_penalty}
     
-    def save_model(self, path):
-        # Create the save directory if it doesn't exist
-        os.makedirs(path, exist_ok=True)
+    def get_config(self):
+        # get the default configuration for the model
+        base_config = super().get_config()
         
-        # Save the generator and discriminator models separately
-        self.generator.save(os.path.join(path, 'generator_model.keras'))
-        self.discriminator.save(os.path.join(path, 'discriminator_model.keras'))
-        
-        # Save any other configurations in a JSON file
-        config = {
+        # get extra configurations for custom model attributes (not Python objects like ints, strings, etc.)
+        custom_config = {
+            "discriminator": keras.saving.serialize_keras_object(self.discriminator),
+            "generator": keras.saving.serialize_keras_object(self.generator),
             "latent_dim": self.latent_dim,
-            "num_disc_steps": self.num_disc_steps,
+            "discriminator_extra_steps": self.num_disc_steps,
             "gp_weight": self.gp_weight,
+            "disc_optimizer": keras.saving.serialize_keras_object(self.disc_optimizer),
+            "gen_optimizer": keras.saving.serialize_keras_object(self.gen_optimizer),
+            "disc_loss_fn": keras.saving.serialize_keras_object(self.disc_loss_fn),
+            "gen_loss_fn": keras.saving.serialize_keras_object(self.gen_loss_fn),
         }
-        with open(os.path.join(path, 'config.json'), 'w') as f:
-            json.dump(config, f)
         
-        print(f"Model saved successfully at {path}")
+        # combine the two configurations
+        config = {**base_config, **custom_config}
+        return config
     
     @classmethod
-    def load_model(cls, path):
-        # Load the generator and discriminator models
-        generator = keras.models.load_model(os.path.join(path, 'generator_model.keras'))
-        discriminator = keras.models.load_model(os.path.join(path, 'discriminator_model.keras'))
+    def from_config(cls, config, custom_objects=None):
+        # get the discriminator and generator models from the config
+        discriminator = keras.saving.deserialize_keras_object(config.pop("discriminator"), custom_objects=custom_objects)
+        generator = keras.saving.deserialize_keras_object(config.pop("generator"), custom_objects=custom_objects)
+        latent_dim = config.pop("latent_dim")
+        discriminator_extra_steps = config.pop("discriminator_extra_steps")
+        gp_weight = config.pop("gp_weight")
+        # REVIEW: if this is the line that is messing up, I can put the generation of the optimizer in it's own custom function and try again
+        disc_optimizer = keras.saving.deserialize_keras_object(config.pop("disc_optimizer"), custom_objects=custom_objects)
+        gen_optimizer = keras.saving.deserialize_keras_object(config.pop("gen_optimizer"), custom_objects=custom_objects)
+        disc_loss_fn = keras.saving.deserialize_keras_object(config.pop("disc_loss_fn"), custom_objects=custom_objects)
+        gen_loss_fn = keras.saving.deserialize_keras_object(config.pop("gen_loss_fn"), custom_objects=custom_objects)
         
-        # Load the configuration
-        with open(os.path.join(path, 'config.json'), 'r') as f:
-            config = json.load(f)
-        
-        # Initialize the WGAN_GP model with loaded components and config
-        model = cls(
-            discriminator=discriminator,
-            generator=generator,
-            latent_dim=config["latent_dim"],
-            discriminator_extra_steps=config["num_disc_steps"],
-            gp_weight=config["gp_weight"],
-        )
-        
-        print(f"Model loaded successfully from {path}")
+        # create a new instance of the model with the discriminator and generator models (This calls the __init__ method)
+        model = cls(discriminator=discriminator, generator=generator, latent_dim=latent_dim, discriminator_extra_steps=discriminator_extra_steps, 
+                    gp_weight=gp_weight, disc_optimizer=disc_optimizer, gen_optimizer=gen_optimizer, disc_loss_fn=disc_loss_fn, gen_loss_fn=gen_loss_fn)
         return model
 
 
@@ -381,7 +429,7 @@ class GANMonitor(keras.callbacks.Callback):
         plt.close()
         
         # every 5 epochs, generate a GIF of all the saved images
-        if epoch % 5 == 0:
+        if epoch % 5 == 0 and epoch > 0:
             self.generate_gif()
         return
     
@@ -416,22 +464,38 @@ class LossLogger(tf.keras.callbacks.Callback):
         """
         samples_per_epoch: int, the number of samples in the training dataset
         """
+        loss_plot_save_dir = "loss_plots"
+        os.makedirs(loss_plot_save_dir, exist_ok=True)
+        
         self.samples_per_epoch = samples_per_epoch
-        # Initialize the loss dataframe to track metrics
-        self.loss_df = pd.DataFrame(columns=[
-            "epoch", "disc_loss", "disc_loss_real", "disc_loss_fake", "disc_loss_gp", "gen_loss", "samples_trained_on", "model_loaded"
-        ])
+        # # Initialize the loss dataframe to track metrics
+        # self.loss_df = pd.DataFrame(columns=[
+        #     "epoch", "disc_loss", "disc_loss_real", "disc_loss_fake", "disc_loss_gp", "gen_loss", "samples_trained_on", "model_loaded"
+        # ])
+        
+        # load the loss dataframe if it exists
+        loss_csv_path = os.path.join(loss_plot_save_dir, "loss.csv")
+        if os.path.exists(loss_csv_path):
+            self.loss_df = pd.read_csv(loss_csv_path)
+        else:
+            self.loss_df = pd.DataFrame(columns=[
+                "epoch", "disc_loss", "disc_loss_real", "disc_loss_fake", "disc_loss_gp", "gen_loss", "samples_trained_on", "model_loaded"
+            ])
         return
     
     def on_epoch_end(self, epoch, logs=None):
+        # TODO: move this to the init so that it only runs once and is saved as a class attribute
+        # Ensure save directory exists
+        loss_plot_save_dir = "loss_plots"
+        os.makedirs(loss_plot_save_dir, exist_ok=True)
         # extract info from logs dictionary
-        disc_loss = logs["disc_loss"]
-        disc_loss_real = logs["disc_loss_real"]
-        disc_loss_fake = logs["disc_loss_fake"]
-        disc_loss_gp = logs["disc_loss_gp"]
-        gen_loss = logs["gen_loss"]
+        disc_loss = float(logs["disc_loss"])
+        disc_loss_real = float(logs["disc_loss_real"])
+        disc_loss_fake = float(logs["disc_loss_fake"])
+        disc_loss_gp = float(logs["disc_loss_gp"])
+        gen_loss = float(logs["gen_loss"])
         # start epoch count from 1 as we are saying: "These are metrics at the end of one epoch" for the first epoch
-        epoch = epoch + 1
+        epoch = len(self.loss_df) + 1
         
         # print the metrics
         print(f"\nEpoch: {epoch}")
@@ -461,9 +525,6 @@ class LossLogger(tf.keras.callbacks.Callback):
         self.loss_df.to_csv("loss_plots/loss.csv", index=False)
         
         ######################### PLOT LOSSES #########################
-        # Ensure save directory exists
-        loss_plot_save_dir = "loss_plots"
-        os.makedirs(loss_plot_save_dir, exist_ok=True)
         
         #################################################################################################
         

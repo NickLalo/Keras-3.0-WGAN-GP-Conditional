@@ -14,8 +14,7 @@ import tensorflow as tf
 from keras import layers
 import matplotlib.pyplot as plt
 
-from model_and_callbacks import get_discriminator_model, get_generator_model, GANMonitor, LossLogger, WGAN_GP, discriminator_loss, generator_loss, \
-get_discriminator_optimizer, get_generator_optimizer
+from model_and_callbacks import get_discriminator_model, get_generator_model, GANMonitor, LossLogger, WGAN_GP, discriminator_loss, generator_loss
 
 
 if __name__ == "__main__":
@@ -78,14 +77,9 @@ if __name__ == "__main__":
     gen_model = get_generator_model(noise_dim)
     # gen_model.summary()
     
-    # REVIEW: putting these inside of functions so that I can serialize them with the model?
-    # # Instantiate the optimizer for both networks
-    # generator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
-    # discriminator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
-    
-    # get the optimizers for both networks
-    discriminator_optimizer = get_discriminator_optimizer()
-    generator_optimizer = get_generator_optimizer()
+    # Instantiate the optimizer for both networks
+    generator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
+    discriminator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
     
     # Initialize the customer `GANMonitor` Keras callback to view generated images at the end of every epoch
     gan_monitor_callback = GANMonitor(num_img=20, latent_dim=noise_dim, grid_size=(4, 5))
@@ -93,18 +87,7 @@ if __name__ == "__main__":
     loss_logger_callback = LossLogger(samples_per_epoch=train_images.shape[0])
     
     # Get the wgan_gp model
-    wgan_gp = WGAN_GP(
-        discriminator=disc_model,
-        generator=gen_model,
-        latent_dim=noise_dim,
-        discriminator_extra_steps=5,  # was set to 3, but I think 5 is recommended
-        disc_optimizer=discriminator_optimizer,
-        gen_optimizer=generator_optimizer,
-        disc_loss_fn=discriminator_loss,
-        gen_loss_fn=generator_loss,
-        )
-    
-    # Compile the wgan_gp model
+    wgan_gp = keras.models.load_model("wgan_gp_model.keras")
     wgan_gp.compile()
     
     # Start training
@@ -113,27 +96,16 @@ if __name__ == "__main__":
         batch_size=batch_size,
         epochs=epochs, 
         callbacks=[
-            # gan_monitor_callback,  # TODO: combine the gan monitor callback and loss logger callback so they can reference the same df for epoch number
+            # gan_monitor_callback,
             loss_logger_callback,
             ]
         )
     
-    print("\n######## loading model...")
-    # save the model (This will throw a warning saying that our model is not built, but that's ok because our model has two sub-models that are built)
+    # save the model
     wgan_gp.save("wgan_gp_model.keras")
-    
-    
-    print("\n######## loading model...")
-    # naive approach: load the model using the keras load method
-    loaded_wgan_gp = keras.models.load_model("wgan_gp_model.keras")
-    
-    # check that the models are the same
-    random_latent_vectors = tf.random.normal(shape=(20, noise_dim))
-    assert np.allclose(wgan_gp.generator(random_latent_vectors, training=False), loaded_wgan_gp.generator(random_latent_vectors, training=False))
-    print("Model save/load all close check passed!")
     
     script_end_time = time.time()
     time_hours = int((script_end_time - script_start_time) // 3600)
     time_minutes = int(((script_end_time - script_start_time) % 3600) // 60)
     time_seconds = int(((script_end_time - script_start_time) % 3600) % 60)
-    print(f"\nTotal execution time: {time_hours:02d}:{time_minutes:02d}:{time_seconds:02d}")
+    print(f"Total execution time: {time_hours:02d}:{time_minutes:02d}:{time_seconds:02d}")
