@@ -589,8 +589,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                     line_label = ""
                 plt.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
                 # add text to show the number of samples at this checkpoint
-                y_text_position = self.loss_metrics_dataframe[col].max() * 0.85
-                plt.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=6, rotation=90, va='bottom', ha='right', zorder=2)
+                y_text_position = plt.ylim()[1] * 0.9
+                plt.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=8, rotation=90, va='bottom', ha='right', zorder=2)
             
             plt.xlabel("Epoch")
             plt.ylabel(col.replace("_", " ").title())
@@ -631,10 +631,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             plt.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
             # add text to show the number of samples at this checkpoint
             y_text_position = plt.ylim()[1] * 0.9
-            plt.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=6, rotation=90, va='bottom', ha='right', zorder=2)
-            # print the y-axis range of the combined plot
-            print(f"\nCombined plot y-axis range: {plt.ylim()}")
-        
+            plt.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=8, rotation=90, va='bottom', ha='right', zorder=2)
         
         plt.xlabel("Epoch")
         plt.ylabel("Loss Value")

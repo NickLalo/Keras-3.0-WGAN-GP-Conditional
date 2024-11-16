@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 
 from model_and_callbacks import get_discriminator_model, get_generator_model, Training_Monitor, WGAN_GP, discriminator_loss, generator_loss, \
 get_discriminator_optimizer, get_generator_optimizer
+from utils import print_fresh_start_warning_message, get_last_checkpoint_dir_and_file
 
 
 if __name__ == "__main__":
@@ -42,8 +43,8 @@ if __name__ == "__main__":
     fresh_start = True
     # delete ALL files in the model_training_output directory for a fresh start
     if fresh_start:
-        # TODO: have a fun !FRESH START! message print out to give me a few seconds to stop it if I don't want to delete everything
-        #       currently working on this in prototype_ideas_01.py
+        # print out a big warning message that gives some time to cancel the operation
+        print_fresh_start_warning_message()
         
         # reset the model_training_output directory
         shutil.rmtree(model_training_output_dir)
@@ -88,13 +89,6 @@ if __name__ == "__main__":
     unique_labels = np.unique(train_labels)
     print("Unique labels in the dataset:", unique_labels)
     
-    # make the data folder if it doesn't exist
-    if not os.path.exists("data"):
-        os.makedirs("data")
-    # delete all of the files in the data folder
-    for file in os.listdir("data"):
-        os.remove(f"data/{file}")
-    
     disc_model = get_discriminator_model(img_shape)
     # disc_model.summary()
     
@@ -126,7 +120,7 @@ if __name__ == "__main__":
         discriminator=disc_model,
         generator=gen_model,
         latent_dim=noise_dim,
-        discriminator_extra_steps=5,  # was set to 3, but I think 5 is recommended
+        discriminator_extra_steps=5,
         disc_optimizer=discriminator_optimizer,
         gen_optimizer=generator_optimizer,
         disc_loss_fn=discriminator_loss,
@@ -145,33 +139,11 @@ if __name__ == "__main__":
             ]
         )
     
-    # print("\n######## saving model...")
-    # # save the model (This will throw a warning saying that our model is not built, but that's ok because our model has two sub-models that are built)
-    # wgan_gp.save("wgan_gp_model.keras")
-    
-    #################################################################################################################################################
-    ######################### write a function to get the path for the last model checkpoint dir and last model checkpoint file
-    print("\n######## loading model to pick up training from where we left off...")
-    # TODO: write a function for finding the latest model checkpoint and loading the model from that checkpoint
-    sorted_checkpoint_dirs = sorted(os.listdir(model_checkpoints_dir))
-    last_checkpoint_dir = sorted_checkpoint_dirs[-1]
-    
-    # list the files in the last checkpoint directory
-    last_checkpoint_dir_path = model_checkpoints_dir.joinpath(last_checkpoint_dir)
-    last_checkpoint_files = os.listdir(last_checkpoint_dir_path)
-    # get the filename that ends with .keras
-    last_model_checkpoint_filename = [file for file in last_checkpoint_files if file.endswith(".keras")][0]
-    last_model_checkpoint_path = last_checkpoint_dir_path.joinpath(last_model_checkpoint_filename)
-    # RETURN last_checkpoint_dir_path, last_model_checkpoint_path
-    #################################################################################################################################################
+    ############################################################ First Model Reload ############################################################
     # # naive approach: load the model using the keras load method
+    last_checkpoint_dir_path, last_model_checkpoint_path = get_last_checkpoint_dir_and_file(model_checkpoints_dir)
     loaded_wgan_gp = keras.models.load_model(last_model_checkpoint_path)
     loaded_wgan_gp.compile()
-    
-    # check that the models are the same
-    random_latent_vectors = tf.random.normal(shape=(20, noise_dim))
-    assert np.allclose(wgan_gp.generator(random_latent_vectors, training=False), loaded_wgan_gp.generator(random_latent_vectors, training=False))
-    print("Model save/load all close check passed!")
     
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
@@ -194,29 +166,11 @@ if __name__ == "__main__":
             ]
         )
     
-    #################################################################################################################################################
-    ######################### write a function to get the path for the last model checkpoint dir and last model checkpoint file
-    print("\n######## loading model to pick up training from where we left off...")
-    # TODO: write a function for finding the latest model checkpoint and loading the model from that checkpoint
-    sorted_checkpoint_dirs = sorted(os.listdir(model_checkpoints_dir))
-    last_checkpoint_dir = sorted_checkpoint_dirs[-1]
-    
-    # list the files in the last checkpoint directory
-    last_checkpoint_dir_path = model_checkpoints_dir.joinpath(last_checkpoint_dir)
-    last_checkpoint_files = os.listdir(last_checkpoint_dir_path)
-    # get the filename that ends with .keras
-    last_model_checkpoint_filename = [file for file in last_checkpoint_files if file.endswith(".keras")][0]
-    last_model_checkpoint_path = last_checkpoint_dir_path.joinpath(last_model_checkpoint_filename)
-    # RETURN last_checkpoint_dir_path, last_model_checkpoint_path
-    #################################################################################################################################################
+    ############################################################ Second Model Reload ############################################################
     # # naive approach: load the model using the keras load method
+    last_checkpoint_dir_path, last_model_checkpoint_path = get_last_checkpoint_dir_and_file(model_checkpoints_dir)
     second_loaded_wgan_gp = keras.models.load_model(last_model_checkpoint_path)
     second_loaded_wgan_gp.compile()
-    
-    # check that the models are the same
-    random_latent_vectors = tf.random.normal(shape=(20, noise_dim))
-    assert np.allclose(second_loaded_wgan_gp.generator(random_latent_vectors, training=False), loaded_wgan_gp.generator(random_latent_vectors, training=False))
-    print("Model save/load all close check passed!")
     
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
@@ -238,31 +192,6 @@ if __name__ == "__main__":
             training_monitor_callback,
             ]
         )
-    
-    # # save the model
-    # loaded_wgan_gp.save("wgan_gp_model.keras")
-    
-    # print("\n######## loading model a second time to pick up training from where we left off...")#
-    
-    # # naive approach: load the model using the keras load method
-    # second_loaded_wgan_gp = keras.models.load_model("wgan_gp_model.keras")
-    # second_loaded_wgan_gp.compile()
-    
-    # # Initialize a custom LossLogger callback to log metrics at the end of every epoch
-    # training_monitor_callback = Training_Monitor(num_img=20, latent_dim=noise_dim, grid_size=(4, 5), samples_per_epoch=train_images.shape[0])
-    
-    # # Start training
-    # second_loaded_wgan_gp.fit(
-    #     train_images, 
-    #     batch_size=batch_size,
-    #     epochs=epochs, 
-    #     callbacks=[
-    #         training_monitor_callback,
-    #         ]
-    #     )
-    
-    # # save the model
-    # second_loaded_wgan_gp.save("wgan_gp_model.keras")
     
     script_end_time = time.time()
     time_hours = int((script_end_time - script_start_time) // 3600)
