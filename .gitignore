@@ -13,3 +13,4 @@ wgan_gp_model.keras
 data/
 loss_plots/
 wgan_gp_model/
+model_training_output/
