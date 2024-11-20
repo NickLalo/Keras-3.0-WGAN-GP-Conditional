@@ -1,5 +1,8 @@
 """
 model definitions and callbacks
+
+Implementation modified from following this tutorial:
+https://keras.io/examples/generative/wgan_gp/
 """
 
 
