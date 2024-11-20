@@ -11,11 +11,8 @@ from pathlib import Path
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
 
-import numpy as np
 import keras
 import tensorflow as tf
-from keras import layers
-import matplotlib.pyplot as plt
 
 # Set memory growth on the GPU (so it doesn't use all the memory at once)
 gpus = tf.config.list_physical_devices('GPU')
