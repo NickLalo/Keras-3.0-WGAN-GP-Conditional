@@ -668,7 +668,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             # Add vertical lines for model loading events with a single label for legend
             for i, model_load_epoch in enumerate(model_load_indices):
                 if i == 0:
-                    line_label = "First checkpoint after loading"
+                    line_label = "ckpt after loading"
                 else:
                     line_label = ""
                 ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
@@ -780,7 +780,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         for i, model_load_epoch in enumerate(model_load_indices):
             if i == 0:
-                line_label = "First checkpoint after loading"
+                line_label = "ckpt after loading"
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
