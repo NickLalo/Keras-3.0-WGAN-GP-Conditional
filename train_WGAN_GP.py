@@ -1,5 +1,6 @@
 """
-Implementing a WGAN-GP from this tutorial: https://keras.io/examples/generative/wgan_gp/ with a different model and MNIST instead of fashion MNIST.
+Implementation of a WGAN-GP with MNIST from this tutorial:
+https://keras.io/examples/generative/wgan_gp/
 """
 
 
@@ -16,23 +17,36 @@ import tensorflow as tf
 from keras import layers
 import matplotlib.pyplot as plt
 
-from model_and_callbacks import get_discriminator_model, get_generator_model, Training_Monitor, WGAN_GP, discriminator_loss, generator_loss, \
-get_discriminator_optimizer, get_generator_optimizer
-from utils import print_fresh_start_warning_message, get_last_checkpoint_dir_and_file
+# Set memory growth on the GPU (so it doesn't use all the memory at once)
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
+
+from model_and_callbacks import get_discriminator_model, get_generator_model, Training_Monitor, WGAN_GP, discriminator_loss, generator_loss
+from utils import print_fresh_start_warning_message, get_last_checkpoint_dir_and_file, parse_arguments
+from load_data import load_mnist_dataset
 
 
 if __name__ == "__main__":
     script_start_time = time.time()
-    #-------------------------------
-    ### HYPERPARAMETERS
-    #-------------------------------
-    batch_size = 256
-    # Size of the noise vector
-    noise_dim = 128
     
-    # TODO: add a debug_run flag to set a small number of epochs and a small percentage of the data to train on
-    # Set the number of epochs for training.
-    epochs = 5  # REVIEW: for now, train for a very small number of epochs
+    # Parse arguments to get the hyperparameters for the model run
+    args = parse_arguments()
+    batch_size = args.batch_size
+    noise_dim = args.noise_dim
+    debug_run = args.debug_run
+    fresh_start = args.fresh_start
+    
+    # Set the number of epochs for the model run
+    if debug_run:
+        print("DEBUG MODE: Running with a small number of epochs.")
+        epochs = 5
+    else:
+        epochs = args.epochs
     
     # ensure the model_training_output and model_checkpoints directories exist
     model_training_output_dir = Path("model_training_output")
@@ -40,7 +54,6 @@ if __name__ == "__main__":
     os.makedirs(model_training_output_dir, exist_ok=True)
     os.makedirs(model_checkpoints_dir, exist_ok=True)
     
-    fresh_start = True
     # delete ALL files in the model_training_output directory for a fresh start
     if fresh_start:
         # print out a big warning message that gives some time to cancel the operation
@@ -51,43 +64,14 @@ if __name__ == "__main__":
         os.makedirs(model_training_output_dir, exist_ok=True)
         os.makedirs(model_checkpoints_dir, exist_ok=True)
         last_checkpoint_dir_path = None
+        last_model_checkpoint_path = None
+        print("Fresh start: Deleted all files in the model_training_output directory.")
+    else:
+        # populate the last checkpoint directory and file paths for model reloading
+        last_checkpoint_dir_path, last_model_checkpoint_path = get_last_checkpoint_dir_and_file(model_checkpoints_dir)
     
-    # Load the MNIST dataset
-    (train_images, train_labels), (test_images, test_labels) = keras.datasets.mnist.load_data()
-    # determine the shape of a single image sample
-    img_shape = train_images.shape[1:]
-    
-    # if the img shape is 2 dimensional, add a singleton layer to the end
-    if len(img_shape) == 2:
-        img_shape = img_shape + (1,)
-    # MNIST image shape should be: (28, 28, 1)
-    
-    # add the test data to the train data
-    train_images = np.concatenate((train_images, test_images), axis=0)
-    train_labels = np.concatenate((train_labels, test_labels), axis=0)
-    
-    # Scale the images to the range [-1, 1]
-    # Original pixel values are in the range [0, 255].
-    # To scale them to [-1, 1], we subtract 127.5 (which centers the values around 0)
-    # and then divide by 127.5 (which scales the values to be between -1 and 1).
-    train_images = (train_images.astype(np.float32) - 127.5) / 127.5
-    
-    # add a singleton layer to the end of the train images
-    train_images = np.expand_dims(train_images, axis=-1)
-    
-    # TODO: add a debug_run flag to set a small number of epochs and a small percentage of the data to train on
-    # REVIEW: for now, train using only 10% of the data
-    percentage = 0.1
-    train_images = train_images[:int(percentage * len(train_images))]
-    train_labels = train_labels[:int(percentage * len(train_labels))]
-    
-    # Print the shapes to verify
-    print("Shape of train_images:", train_images.shape)
-    print("Shape of train_labels:", train_labels.shape)
-    
-    # Check that all labels are the same
-    unique_labels = np.unique(train_labels)
-    print("Unique labels in the dataset:", unique_labels)
+    # Load the MNIST dataset for training a GAN
+    train_images, train_labels, img_shape = load_mnist_dataset(debug_run=debug_run)
     
     disc_model = get_discriminator_model(img_shape)
     # disc_model.summary()
@@ -95,99 +79,48 @@ if __name__ == "__main__":
     gen_model = get_generator_model(noise_dim)
     # gen_model.summary()
     
-    # REVIEW: putting these inside of functions so that I can serialize them with the model?
-    # # Instantiate the optimizer for both networks
-    # generator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
-    # discriminator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
-    
-    # get the optimizers for both networks
-    discriminator_optimizer = get_discriminator_optimizer()
-    generator_optimizer = get_generator_optimizer()
-    
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
-        model_training_output_dir, 
-        model_checkpoints_dir, 
-        num_img=20, 
-        latent_dim=noise_dim, 
-        grid_size=(4, 5), 
+        model_training_output_dir,
+        model_checkpoints_dir,
+        num_img=20,
+        latent_dim=noise_dim,
+        grid_size=(4, 5),
         samples_per_epoch=train_images.shape[0],
         last_checkpoint_dir_path=last_checkpoint_dir_path
-    )
-    
-    # Get the wgan_gp model
-    wgan_gp = WGAN_GP(
-        discriminator=disc_model,
-        generator=gen_model,
-        latent_dim=noise_dim,
-        discriminator_extra_steps=5,
-        disc_optimizer=discriminator_optimizer,
-        gen_optimizer=generator_optimizer,
-        disc_loss_fn=discriminator_loss,
-        gen_loss_fn=generator_loss,
         )
-    # Compile the wgan_gp model
-    wgan_gp.compile()
+    
+    # get the wgan_gp model by either creating a new one or loading the last model checkpoint
+    if fresh_start:
+        # Get the wgan_gp model
+        wgan_gp = WGAN_GP(
+            discriminator=disc_model,
+            generator=gen_model,
+            latent_dim=noise_dim,
+            discriminator_input_shape=img_shape,
+            discriminator_extra_steps=5,
+            )
+        
+        # Instantiate the optimizer for both networks
+        generator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
+        discriminator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
+        
+        # Compile the wgan_gp model
+        wgan_gp.compile(
+            disc_optimizer=discriminator_optimizer,
+            gen_optimizer=generator_optimizer,
+            disc_loss_fn=discriminator_loss,
+            gen_loss_fn=generator_loss,
+            )
+    else:
+        # load the last model checkpoint from the last training session
+        wgan_gp = keras.models.load_model(last_model_checkpoint_path)
     
     # Start training
     wgan_gp.fit(
         train_images, 
         batch_size=batch_size,
         epochs=epochs, 
-        callbacks=[
-            training_monitor_callback,
-            ]
-        )
-    
-    ############################################################ First Model Reload ############################################################
-    # # naive approach: load the model using the keras load method
-    last_checkpoint_dir_path, last_model_checkpoint_path = get_last_checkpoint_dir_and_file(model_checkpoints_dir)
-    loaded_wgan_gp = keras.models.load_model(last_model_checkpoint_path)
-    loaded_wgan_gp.compile()
-    
-    # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
-    training_monitor_callback = Training_Monitor(
-        model_training_output_dir, 
-        model_checkpoints_dir, 
-        num_img=20, 
-        latent_dim=noise_dim, 
-        grid_size=(4, 5), 
-        samples_per_epoch=train_images.shape[0],
-        last_checkpoint_dir_path=last_checkpoint_dir_path
-    )
-    
-    # Start training
-    loaded_wgan_gp.fit(
-        train_images,
-        batch_size=batch_size,
-        epochs=epochs,
-        callbacks=[
-            training_monitor_callback,
-            ]
-        )
-    
-    ############################################################ Second Model Reload ############################################################
-    # # naive approach: load the model using the keras load method
-    last_checkpoint_dir_path, last_model_checkpoint_path = get_last_checkpoint_dir_and_file(model_checkpoints_dir)
-    second_loaded_wgan_gp = keras.models.load_model(last_model_checkpoint_path)
-    second_loaded_wgan_gp.compile()
-    
-    # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
-    training_monitor_callback = Training_Monitor(
-        model_training_output_dir, 
-        model_checkpoints_dir, 
-        num_img=20, 
-        latent_dim=noise_dim, 
-        grid_size=(4, 5), 
-        samples_per_epoch=train_images.shape[0],
-        last_checkpoint_dir_path=last_checkpoint_dir_path
-    )
-    
-    # Start training
-    second_loaded_wgan_gp.fit(
-        train_images,
-        batch_size=batch_size,
-        epochs=epochs,
         callbacks=[
             training_monitor_callback,
             ]
