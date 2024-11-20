@@ -1,0 +1,1 @@
+Wasserstein GAN with Gradient Penalty (WGAN-GP) that offers improved training stability and enhanced convergence for generative modeling tasks.
