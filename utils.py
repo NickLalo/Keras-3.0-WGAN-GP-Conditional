@@ -31,6 +31,13 @@ def parse_arguments():
         default=False,
         help="If set, runs in debug mode with a reduced dataset and fewer epochs.",
         )
+    # small subset
+    parser.add_argument(
+        "--small_subset",
+        action="store_true",
+        default=False,
+        help="If set, runs with a small subset of the training data.",
+        )
     # batch size
     parser.add_argument(
         "--batch_size",

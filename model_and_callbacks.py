@@ -259,9 +259,9 @@ class WGAN_GP(keras.Model):
             gp = tf.reduce_mean((norm - 1.0) ** 2)
         return gp
     
-    def train_step(self, real_images):
-        if isinstance(real_images, tuple):
-            real_images = real_images[0]
+    def train_step(self, batch_data):
+        # unpack the batch data into images and labels
+        real_images, real_labels = batch_data
         # Get the batch size from the data as sometimes the last batch can be smaller
         batch_size = tf.shape(real_images)[0]
         
@@ -668,7 +668,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             # Add vertical lines for model loading events with a single label for legend
             for i, model_load_epoch in enumerate(model_load_indices):
                 if i == 0:
-                    line_label = "ckpt after loading"
+                    line_label = "ckpt loaded"
                 else:
                     line_label = ""
                 ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
@@ -710,7 +710,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # Add vertical lines for model loading events with a single label for legend
         for i, model_load_epoch in enumerate(model_load_indices):
             if i == 0:
-                line_label = "ckpt after loading"
+                line_label = "ckpt loaded"
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
@@ -746,7 +746,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # Add vertical lines for model loading events with a single label for legend
         for i, model_load_epoch in enumerate(model_load_indices):
             if i == 0:
-                line_label = "ckpt after loading"
+                line_label = "ckpt loaded"
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
@@ -780,7 +780,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         for i, model_load_epoch in enumerate(model_load_indices):
             if i == 0:
-                line_label = "ckpt after loading"
+                line_label = "ckpt loaded"
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)

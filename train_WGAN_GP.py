@@ -25,7 +25,7 @@ if gpus:
 
 from model_and_callbacks import get_discriminator_model, get_generator_model, Training_Monitor, WGAN_GP, discriminator_loss, generator_loss
 from utils import print_fresh_start_warning_message, get_last_checkpoint_dir_and_file, parse_arguments
-from load_data import load_mnist_dataset
+from load_data import load_mnist_data_for_gan
 
 
 if __name__ == "__main__":
@@ -37,11 +37,16 @@ if __name__ == "__main__":
     noise_dim = args.noise_dim
     debug_run = args.debug_run
     fresh_start = args.fresh_start
+    small_subset = args.small_subset
+    
+    # TODO: remove this after testing out some code
+    fresh_start = True
+    debug_run = True
     
     # Set the number of epochs for the model run
     if debug_run:
         print("DEBUG MODE: Running with a small number of epochs.")
-        epochs = 5
+        epochs = 3
     else:
         epochs = args.epochs
     
@@ -54,7 +59,8 @@ if __name__ == "__main__":
     # delete ALL files in the model_training_output directory for a fresh start
     if fresh_start:
         # print out a big warning message that gives some time to cancel the operation
-        print_fresh_start_warning_message()
+        # TODO: uncomment this after testing out some code
+        # print_fresh_start_warning_message()
         
         # reset the model_training_output directory
         shutil.rmtree(model_training_output_dir)
@@ -68,7 +74,7 @@ if __name__ == "__main__":
         last_checkpoint_dir_path, last_model_checkpoint_path = get_last_checkpoint_dir_and_file(model_checkpoints_dir)
     
     # Load the MNIST dataset for training a GAN
-    train_images, train_labels, img_shape = load_mnist_dataset(debug_run=debug_run)
+    train_dataset, img_shape = load_mnist_data_for_gan(debug_run=debug_run, small_subset=small_subset, batch_size=batch_size, verbose=True)
     
     disc_model = get_discriminator_model(img_shape)
     # disc_model.summary()
@@ -83,7 +89,7 @@ if __name__ == "__main__":
         num_img=20,
         latent_dim=noise_dim,
         grid_size=(4, 5),
-        samples_per_epoch=train_images.shape[0],
+        samples_per_epoch=len(train_dataset),
         last_checkpoint_dir_path=last_checkpoint_dir_path
         )
     
@@ -115,7 +121,7 @@ if __name__ == "__main__":
     
     # Start training
     wgan_gp.fit(
-        train_images, 
+        train_dataset,
         batch_size=batch_size,
         epochs=epochs, 
         callbacks=[
