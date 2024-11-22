@@ -31,18 +31,18 @@ def parse_arguments():
         default=False,
         help="If set, runs in debug mode with a reduced dataset and fewer epochs.",
         )
-    # small subset
+    # percentage between 0 and 1
     parser.add_argument(
-        "--small_subset",
-        action="store_true",
-        default=False,
-        help="If set, runs with a small subset of the training data.",
+        "--dataset_subset_percentage",
+        type=float,
+        default=1.0,
+        help="The percentage of the dataset to use for training in small subset mode.",
         )
     # batch size
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=256,
+        default=64,
         help="The batch size for training the model.",
         )
     # noise dimension

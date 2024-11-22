@@ -8,7 +8,7 @@ import keras
 import tensorflow as tf
 
 
-def load_mnist_data_for_gan(debug_run=False, small_subset=False, batch_size=16, verbose=True):
+def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batch_size=16, verbose=True):
     """
     Load the MNIST dataset and return the training images and labels. A format that is tailored for training a GAN.
     
@@ -22,8 +22,8 @@ def load_mnist_data_for_gan(debug_run=False, small_subset=False, batch_size=16, 
         train_dataset (tf.data.Dataset): A tf.data.Dataset object containing the training images and labels.
         img_shape (tuple): The shape of a single image sample
     """
-    if debug_run and small_subset:
-        raise ValueError("Both debug_run and small_subset cannot be True at the same time.")
+    if debug_run and dataset_subset_percentage != 1.0:
+        raise ValueError("Both debug_run and a dataset_subset_percentage cannot be set at the same time.")
     
     # Load the MNIST dataset
     (train_images, train_labels), (test_images, test_labels) = keras.datasets.mnist.load_data()
@@ -38,11 +38,10 @@ def load_mnist_data_for_gan(debug_run=False, small_subset=False, batch_size=16, 
         subset_size = 1024
         train_images = train_images[:subset_size]
         train_labels = train_labels[:subset_size]
-    elif small_subset:
-        print("\nSMALL SUBSET: Running with a small subset of the training data.\n")
-        percentage = 0.25
-        train_images = train_images[:int(percentage * len(train_images))]
-        train_labels = train_labels[:int(percentage * len(train_labels))]
+    elif dataset_subset_percentage < 1.0:
+        print(f"\nDATASET SUBSET PERCENTAGE: Running with {dataset_subset_percentage}% of the training data.\n")
+        train_images = train_images[:int(dataset_subset_percentage * len(train_images))]
+        train_labels = train_labels[:int(dataset_subset_percentage * len(train_labels))]
     
     # Ensure that the batch size is not greater than the dataset size
     if batch_size > len(train_images):
@@ -57,14 +56,8 @@ def load_mnist_data_for_gan(debug_run=False, small_subset=False, batch_size=16, 
     # MNIST images are (28, 28) (W x H) but our model needs a channel dimension (28, 28, 1) (W x H x C) so we add a singleton layer to the end
     train_images = np.expand_dims(train_images, axis=-1)
     
-    if verbose:
-        # Print the shapes to verify that the data was loaded and formatted correctly
-        print(f"Shape of train_images: {train_images.shape}")
-        print(f"Shape of train_labels: {train_labels.shape}")
-        
-        # print out the unique labels in the dataset
-        unique_labels = np.unique(train_labels)
-        print(f"Unique labels in the dataset: {unique_labels}\n")
+    # get the number of samples in the dataset (as a batched dataset makes it hard to get the exact number of samples)
+    samples_per_epoch = len(train_images)
     
     # Create a tf.data.Dataset object for the training data
     buffer_size = min(len(train_images), 1024)
@@ -74,14 +67,20 @@ def load_mnist_data_for_gan(debug_run=False, small_subset=False, batch_size=16, 
     # determine the shape of a single image sample
     img_shape = train_dataset.element_spec[0].shape[1:]
     
+    # get the number of classes in the dataset
+    unique_labels = np.unique(train_labels)
+    num_classes = len(unique_labels)
+    
     if verbose:
-        print(f"len(train_dataset): {len(train_dataset)}")
+        print(f"\nnumber of samples in the train_dataset: {samples_per_epoch}")
         print(f"Type of train_dataset: {type(train_dataset)}")
         print(f"Shape of train_dataset: {train_dataset.element_spec}")
-        print(f"Shape of a single image: {img_shape}\n")
+        print(f"Shape of a single image: {img_shape}")
+        print(f"Unique labels: {unique_labels}")
+        print(f"Number of classes: {num_classes}\n")
     
-    return train_dataset, img_shape
+    return train_dataset, img_shape, num_classes, samples_per_epoch
 
 
 if __name__ == "__main__":
-    train_dataset, img_shape = load_mnist_data_for_gan()
+    train_dataset, img_shape, number_of_classes, samples_per_epoch = load_mnist_data_for_gan()

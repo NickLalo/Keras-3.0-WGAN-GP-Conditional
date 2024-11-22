@@ -37,15 +37,11 @@ if __name__ == "__main__":
     noise_dim = args.noise_dim
     debug_run = args.debug_run
     fresh_start = args.fresh_start
-    small_subset = args.small_subset
-    
-    # TODO: remove this after testing out some code
-    fresh_start = True
-    debug_run = True
+    dataset_subset_percentage = args.dataset_subset_percentage
     
     # Set the number of epochs for the model run
     if debug_run:
-        print("DEBUG MODE: Running with a small number of epochs.")
+        print("\nDEBUG MODE: Running with a small number of epochs.\n")
         epochs = 3
     else:
         epochs = args.epochs
@@ -58,9 +54,8 @@ if __name__ == "__main__":
     
     # delete ALL files in the model_training_output directory for a fresh start
     if fresh_start:
-        # print out a big warning message that gives some time to cancel the operation
-        # TODO: uncomment this after testing out some code
-        # print_fresh_start_warning_message()
+        # print out a big warning message that gives some time to cancel before the files are deleted
+        print_fresh_start_warning_message()
         
         # reset the model_training_output directory
         shutil.rmtree(model_training_output_dir)
@@ -74,22 +69,23 @@ if __name__ == "__main__":
         last_checkpoint_dir_path, last_model_checkpoint_path = get_last_checkpoint_dir_and_file(model_checkpoints_dir)
     
     # Load the MNIST dataset for training a GAN
-    train_dataset, img_shape = load_mnist_data_for_gan(debug_run=debug_run, small_subset=small_subset, batch_size=batch_size, verbose=True)
+    train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(debug_run, dataset_subset_percentage, batch_size, verbose=True)
     
-    disc_model = get_discriminator_model(img_shape)
+    disc_model = get_discriminator_model(img_shape, num_classes)
     # disc_model.summary()
     
-    gen_model = get_generator_model(noise_dim)
+    gen_model = get_generator_model(noise_dim, num_classes)
     # gen_model.summary()
     
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
         model_training_output_dir,
         model_checkpoints_dir,
+        num_classes=num_classes,
         num_img=20,
         latent_dim=noise_dim,
         grid_size=(4, 5),
-        samples_per_epoch=len(train_dataset),
+        samples_per_epoch=samples_per_epoch,
         last_checkpoint_dir_path=last_checkpoint_dir_path
         )
     
@@ -99,6 +95,7 @@ if __name__ == "__main__":
         wgan_gp = WGAN_GP(
             discriminator=disc_model,
             generator=gen_model,
+            num_classes=num_classes,
             latent_dim=noise_dim,
             discriminator_input_shape=img_shape,
             discriminator_extra_steps=5,

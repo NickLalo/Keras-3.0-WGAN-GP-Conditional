@@ -9,6 +9,7 @@ https://keras.io/examples/generative/wgan_gp/
 import os
 import shutil
 import pandas as pd
+import numpy as np
 import keras
 import tensorflow as tf
 from keras import layers
@@ -56,13 +57,26 @@ def conv_block(
     return x
 
 
-@keras.saving.register_keras_serializable(package="generator_model", name="generator_model")
-def get_discriminator_model(img_shape):
+@keras.saving.register_keras_serializable(package="discriminator_model", name="discriminator_model")
+def get_discriminator_model(img_shape, num_classes):
+    # Image input
     img_input = layers.Input(shape=img_shape)
-    # Zero pad the input to make the input images size to (32, 32, 1).
-    x = layers.ZeroPadding2D((2, 2))(img_input)
+    
+    # Label input
+    labels = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming labels are integers
+    labels_one_hot = layers.Embedding(num_classes, num_classes)(labels)  # Convert to one-hot
+    labels_one_hot = layers.Flatten()(labels_one_hot)  # Flatten embedding output
+    
+    # Expand labels to match the image dimensions
+    label_tensor = layers.Dense(np.prod(img_shape))(labels_one_hot)  # Fully connected layer
+    label_tensor = layers.Reshape(img_shape)(label_tensor)  # Reshape to match image shape
+    
+    # Concatenate image and label tensors
+    combined_input = layers.Concatenate()([img_input, label_tensor])
+    
+    # Discriminator architecture
     x = conv_block(
-        x,
+        combined_input,
         64,
         kernel_size=(5, 5),
         strides=(2, 2),
@@ -110,7 +124,8 @@ def get_discriminator_model(img_shape):
     x = layers.Dropout(0.2)(x)
     x = layers.Dense(1)(x)
     
-    disc_model = keras.models.Model(img_input, x, name="discriminator")
+    # Define the model with both inputs
+    disc_model = keras.models.Model([img_input, labels], x, name="discriminator")
     return disc_model
 
 
@@ -143,9 +158,20 @@ def upsample_block(
 
 
 @keras.saving.register_keras_serializable(package="generator_model", name="generator_model")
-def get_generator_model(noise_dim):
+def get_generator_model(noise_dim, num_classes):
+    # Noise input
     noise = layers.Input(shape=(noise_dim,))
-    x = layers.Dense(4 * 4 * 256, use_bias=False)(noise)
+    
+    # Label input
+    labels = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming labels are integers
+    labels_one_hot = layers.Embedding(num_classes, num_classes)(labels)  # Convert to one-hot
+    labels_one_hot = layers.Flatten()(labels_one_hot)  # Flatten embedding output
+    
+    # Concatenate noise and labels
+    x = layers.Concatenate()([noise, labels_one_hot])
+    
+    # Generator architecture
+    x = layers.Dense(4 * 4 * 256, use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.LeakyReLU(0.2)(x)
     
@@ -177,7 +203,8 @@ def get_generator_model(noise_dim):
     # We will use a Cropping2D layer to make it (28, 28, 1).
     x = layers.Cropping2D((2, 2))(x)
     
-    gen_model = keras.models.Model(noise, x, name="generator")
+    # Define the model with both inputs
+    gen_model = keras.models.Model([noise, labels], x, name="generator")
     return gen_model
 
 
@@ -206,6 +233,7 @@ class WGAN_GP(keras.Model):
         self,
         discriminator,
         generator,
+        num_classes,
         latent_dim,
         discriminator_extra_steps=3,
         discriminator_input_shape=None,
@@ -215,6 +243,7 @@ class WGAN_GP(keras.Model):
         super().__init__(**kwargs)
         self.discriminator = discriminator
         self.generator = generator
+        self.num_classes = num_classes
         self.latent_dim = latent_dim
         # in a WGAN-GP, the discriminator trains for a number of steps and then generator trains for one step
         self.num_disc_steps = discriminator_extra_steps
@@ -237,8 +266,9 @@ class WGAN_GP(keras.Model):
         self.gen_loss_fn = gen_loss_fn
         return
     
-    def gradient_penalty(self, batch_size, real_images, fake_images):
-        """Calculates the gradient penalty.
+    def gradient_penalty(self, batch_size, real_images, fake_images, real_labels):
+        """
+        Calculates the gradient penalty.
         
         This loss is calculated on an interpolated image
         and added to the discriminator loss.
@@ -250,10 +280,13 @@ class WGAN_GP(keras.Model):
         
         with tf.GradientTape() as gp_tape:
             gp_tape.watch(interpolated)
-            # 1. Get the discriminator output for this interpolated image.
-            pred = self.discriminator(interpolated, training=True)
-            # 2. Calculate the gradients w.r.t to this interpolated image.
+            
+            # 1. Pass interpolated images and real labels to the discriminator
+            pred = self.discriminator([interpolated, real_labels], training=True)
+            
+            # 2. Calculate the gradients w.r.t to this interpolated image
             grads = gp_tape.gradient(pred, [interpolated])[0]
+            
             # 3. Calculate the norm of the gradients.
             norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
             gp = tf.reduce_mean((norm - 1.0) ** 2)
@@ -276,55 +309,56 @@ class WGAN_GP(keras.Model):
         
         # # Initialize lists to track discriminator scores on real and fake images
         discriminator_real_scores = []
-        discriminator_fake_scores = []  # from the generated images
+        discriminator_fake_scores = []
         gradient_penalties = []
+        discriminator_losses = []
         
-        # Train the discriminator first. The original paper recommends training
-        # the discriminator for `x` more steps (typically 5) as compared to
-        # one step of the generator. Here we will train it for 3 extra steps
-        # as compared to 5 to reduce the training time.
-        for i in range(self.num_disc_steps):
+        ####################################### Train the discriminator #######################################
+        for _ in range(self.num_disc_steps):
             # Get a batch of random latent vectors
-            random_latent_vectors = tf.random.normal(
-                shape=(batch_size, self.latent_dim)
-            )
+            random_latent_vectors = tf.random.normal(shape=(batch_size, self.latent_dim))
             
             with tf.GradientTape() as tape:
-                # Generate fake images from the latent vector
-                fake_images = self.generator(random_latent_vectors, training=True)
-                # Get the discriminator scores (logits) for the fake images
-                fake_logits = self.discriminator(fake_images, training=True)
-                # Get the discriminator scores (logits) for the real images
-                real_logits = self.discriminator(real_images, training=True)
+                # Generate fake images using the real labels for training the discriminator
+                fake_images = self.generator([random_latent_vectors, real_labels], training=True)
                 
-                # # Append the mean scores to track them
+                # Get the discriminator scores (logits) for the fake and real images
+                fake_logits = self.discriminator([fake_images, real_labels], training=True)
+                real_logits = self.discriminator([real_images, real_labels], training=True)
+                
+                # Append the mean scores to track them
                 discriminator_real_scores.append(tf.reduce_mean(real_logits))
                 discriminator_fake_scores.append(tf.reduce_mean(fake_logits))
                 
-                # Calculate the discriminator loss using the fake and real image logits
+                # Calculate the discriminator loss
                 disc_cost = self.disc_loss_fn(real_img=real_logits, fake_img=fake_logits)
+                
                 # Calculate the gradient penalty
-                gp = self.gradient_penalty(batch_size, real_images, fake_images)
+                gp = self.gradient_penalty(batch_size, real_images, fake_images, real_labels)
+                
                 # Add the gradient penalty to the discriminator loss
                 disc_loss = disc_cost + gp * self.gp_weight
                 
-                # Append the gradient penalty to track it
+                # Append the gradient penalty and discriminator loss to track them
                 gradient_penalties.append(gp)
+                discriminator_losses.append(disc_loss)
             
             # Get the gradients for the discriminator loss
             disc_gradient = tape.gradient(disc_loss, self.discriminator.trainable_variables)
             # Update the discriminator's weights
             self.disc_optimizer.apply_gradients(zip(disc_gradient, self.discriminator.trainable_variables))
         
-        # Train the generator
+        ######################################### Train the generator #########################################
         # Generate a new batch of random latent vectors
         random_latent_vectors = tf.random.normal(shape=(batch_size, self.latent_dim))
         
         with tf.GradientTape() as tape:
-            # Generate fake images with the generator
-            generated_images = self.generator(random_latent_vectors, training=True)
+            # Generate fake images using real labels for training the generator
+            generated_images = self.generator([random_latent_vectors, real_labels], training=True)
+            
             # Get the discriminator scores (logits) for the generated images
-            gen_img_logits = self.discriminator(generated_images, training=True)
+            gen_img_logits = self.discriminator([generated_images, real_labels], training=True)
+            
             # Calculate the generator loss
             gen_loss = self.gen_loss_fn(gen_img_logits)
         
@@ -337,13 +371,14 @@ class WGAN_GP(keras.Model):
         avg_real_score = tf.reduce_mean(discriminator_real_scores)
         avg_fake_score = tf.reduce_mean(discriminator_fake_scores)
         avg_gradient_penalty = tf.reduce_mean(gradient_penalties)
+        avg_disc_loss = tf.reduce_mean(discriminator_losses)
         
         return_dict = {
-            "disc_loss": disc_loss,
+            "disc_loss": avg_disc_loss,
             "gen_loss": gen_loss,
             "disc_loss_real": avg_real_score,
             "disc_loss_fake": avg_fake_score,
-            "disc_loss_gp": avg_gradient_penalty
+            "gradient_penalty": avg_gradient_penalty
             }
         
         return return_dict
@@ -369,6 +404,7 @@ class WGAN_GP(keras.Model):
         custom_config = {
             "discriminator": keras.saving.serialize_keras_object(self.discriminator),
             "generator": keras.saving.serialize_keras_object(self.generator),
+            "num_classes": self.num_classes,
             "latent_dim": self.latent_dim,
             "discriminator_extra_steps": self.num_disc_steps,
             "gp_weight": self.gp_weight,
@@ -407,12 +443,18 @@ class WGAN_GP(keras.Model):
         # get the discriminator and generator models from the config
         discriminator = keras.saving.deserialize_keras_object(config.pop("discriminator"), custom_objects=custom_objects)
         generator = keras.saving.deserialize_keras_object(config.pop("generator"), custom_objects=custom_objects)
+        num_classes = config.pop("num_classes")
         latent_dim = config.pop("latent_dim")
         discriminator_extra_steps = config.pop("discriminator_extra_steps")
         gp_weight = config.pop("gp_weight")
         
         # create a new instance of the model with the discriminator and generator models (This calls the __init__ method)
-        model = cls(discriminator=discriminator, generator=generator, latent_dim=latent_dim, discriminator_extra_steps=discriminator_extra_steps, 
+        model = cls(
+            discriminator=discriminator, 
+            generator=generator,
+            num_classes=num_classes,
+            latent_dim=latent_dim, 
+            discriminator_extra_steps=discriminator_extra_steps, 
                     gp_weight=gp_weight)
         return model
     
@@ -455,6 +497,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     Attributes:
         model_training_output_dir (str): Directory to save outputs from the model training.
         model_checkpoints_dir (str): Directory to save model checkpoints and info at each epoch.
+        num_classes (int): Number of classes in the dataset.
         num_img (int): Number of images to generate at the end of each epoch.
         latent_dim (int): Latent dimension of the generator.
         grid_size (tuple): Size of the grid for the generated images.
@@ -483,6 +526,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def __init__(self, 
                 model_training_output_dir, 
                 model_checkpoints_dir, 
+                num_classes,
                 num_img, 
                 latent_dim, 
                 grid_size, 
@@ -501,7 +545,9 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self. model_training_output_dir = model_training_output_dir
         self.model_checkpoints_dir = model_checkpoints_dir
         self.this_epoch_checkpoint_dir = None  # the path to the current model checkpoint (will be set/updated in on_epoch_end)
+        self.num_classes = num_classes
         
+        # parameters for generating validation samples
         self.num_img = num_img
         self.latent_dim = latent_dim
         self.grid_size = grid_size  # Grid size as a tuple (rows, cols)
@@ -510,9 +556,10 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # every time the model is reloaded.
         generator = tf.random.Generator.from_seed(112)
         self.random_latent_vectors = generator.normal(shape=(self.num_img, self.latent_dim))
+        self.random_labels = generator.uniform(shape=(self.num_img, 1), minval=0, maxval=self.num_classes, dtype=tf.int32)
         
-        self.samples_per_epoch = samples_per_epoch
         self.gif_creation_frequency = 5  # create a GIF every 5 epochs
+        self.samples_per_epoch = samples_per_epoch
         
         # load the loss metrics csv to a dataframe if the last_checkpoint_dir_path is provided (we are reloading the model)
         if last_checkpoint_dir_path is not None:
@@ -593,7 +640,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 - "disc_loss": Discriminator total loss
                 - "disc_loss_real": Discriminator loss on real samples
                 - "disc_loss_fake": Discriminator loss on fake samples
-                - "disc_loss_gp": Discriminator gradient penalty loss
+                - "gradient_penalty": Discriminator gradient penalty loss
                 - "gen_loss": Generator loss
         Returns:
             None
@@ -602,7 +649,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         disc_loss = float(logs["disc_loss"])
         disc_loss_real = float(logs["disc_loss_real"])
         disc_loss_fake = float(logs["disc_loss_fake"])
-        disc_loss_gp = float(logs["disc_loss_gp"])
+        gradient_penalty = float(logs["gradient_penalty"])
         gen_loss = float(logs["gen_loss"])
         # start epoch count from 1 as we are saying: "These are metrics at the end of one epoch" for the first epoch
         epoch = len(self.loss_metrics_dataframe) + 1
@@ -618,7 +665,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             "disc_loss": disc_loss,
             "disc_loss_real": disc_loss_real,
             "disc_loss_fake": disc_loss_fake,
-            "disc_loss_gp": disc_loss_gp,
+            "gradient_penalty": gradient_penalty,
             "gen_loss": gen_loss,
             # calculate the number of samples trained on at the end of this epoch
             "samples_trained_on": epoch * self.samples_per_epoch,
@@ -648,7 +695,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         the number of samples trained on.
         """
         # Define list of individual loss columns to plot
-        loss_columns = ["disc_loss", "disc_loss_real", "disc_loss_fake", "disc_loss_gp", "gen_loss"]
+        loss_columns = ["disc_loss", "disc_loss_real", "disc_loss_fake", "gradient_penalty", "gen_loss"]
         
         # Identify locations where model was loaded
         model_load_indices = self.loss_metrics_dataframe.loc[self.loss_metrics_dataframe['model_loaded'], 'epoch']
@@ -823,12 +870,12 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             None
         """
         # Generate a set of images (number is determined by num_img defined in the initializer)
-        generated_images = self.model.generator(self.random_latent_vectors, training=False)
+        generated_images = self.model.generator([self.random_latent_vectors, self.random_labels], training=False)
         # Rescale the images from [-1, 1] to [0, 255]
         generated_images = (generated_images * 127.5) + 127.5
         
         # Get discriminator scores for generated images using CPU
-        discriminator_scores = self.model.discriminator(generated_images, training=False)
+        discriminator_scores = self.model.discriminator([generated_images, self.random_labels], training=False)
         
         # Creating a grid of images
         fig, axes = plt.subplots(self.grid_size[0], self.grid_size[1], figsize=(self.grid_size[1] * 2, self.grid_size[0] * 2))
@@ -842,7 +889,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             axes[row, col].axis('off')
             # get the discriminator score for the generated image as a float value
             score = discriminator_scores[i].numpy().item()
-            axes[row, col].set_title(f'Score: {score:.2f}', fontsize=8)
+            label = self.random_labels[i].numpy().item()
+            axes[row, col].set_title(f'Label: {label} Score: {score:.2f}', fontsize=6)
         
         # Add a title to the plot with the epoch and number of samples trained
         epoch = len(self.loss_metrics_dataframe)
