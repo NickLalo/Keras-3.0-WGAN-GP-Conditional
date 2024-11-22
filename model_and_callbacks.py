@@ -235,7 +235,7 @@ class WGAN_GP(keras.Model):
         generator,
         num_classes,
         latent_dim,
-        discriminator_extra_steps=3,
+        discriminator_extra_steps=5,
         discriminator_input_shape=None,
         gp_weight=10.0,
         **kwargs
@@ -347,6 +347,11 @@ class WGAN_GP(keras.Model):
             disc_gradient = tape.gradient(disc_loss, self.discriminator.trainable_variables)
             # Update the discriminator's weights
             self.disc_optimizer.apply_gradients(zip(disc_gradient, self.discriminator.trainable_variables))
+            
+            # REVIEW: consider resampling the dataset to get a new batch of real images and labels here to avoid training on the same batch
+            #         multiple times. This could be achieved by making a copy of the dataset a class attribute.
+            # Example:
+            # real_images, real_labels = next(iter(self.train_dataset))
         
         ######################################### Train the generator #########################################
         # Generate a new batch of random latent vectors

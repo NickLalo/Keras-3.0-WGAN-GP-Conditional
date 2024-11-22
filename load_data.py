@@ -84,3 +84,10 @@ def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batc
 
 if __name__ == "__main__":
     train_dataset, img_shape, number_of_classes, samples_per_epoch = load_mnist_data_for_gan()
+    
+    number_of_batches = len(train_dataset)
+    real_images, real_labels = next(iter(train_dataset))
+    
+    print(f"Number of batches in the train_dataset: {number_of_batches}")
+    print(f"Shape of the real_images: {real_images.shape}")
+    print(f"Shape of the real_labels: {real_labels.shape}")
