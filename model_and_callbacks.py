@@ -12,8 +12,6 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import keras
-# REVIEW: remove this line if the code runs time
-# from keras.utils import plot_model  # type: ignore # because keras.utils.plot_model is not recognized by mypy
 from keras import layers
 import tensorflow as tf
 import matplotlib
@@ -49,6 +47,9 @@ def conv_block(
         use_dropout=False,
         drop_value=0.5,
     ):
+    """
+    convolutional block used in the critic model with optional batch normalization and dropout.
+    """
     x = layers.Conv2D(
         filters, kernel_size, strides=strides, padding=padding, use_bias=use_bias
     )(x)
@@ -68,7 +69,7 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
     and then concatenated with the image tensor. This combined tensor is passed through the convolutional layers and lastly through a dense layer
     without an activation function to output the critic's score for the input image-label pair.
     
-    REVIEW: I removed dropout from the critic model, but could add it back if the model is overfitting.
+    I removed dropout from the critic model, but could add it back if the model is overfitting.
     
     This function also:
         1. saves a copy of the model summary to a text file in the model_training_output directory
@@ -119,7 +120,7 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
         use_bn=False,
         use_bias=True,
         use_dropout=False,
-        # REVIEW: dropout was here (0.3)
+        # dropout (0.3) removed
     )
     x = conv_block(
         x,
@@ -130,7 +131,7 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
         use_bn=False,
         use_bias=True,
         use_dropout=False,
-        # REVIEW: dropout was here (0.3)
+        # dropout (0.3) removed
     )
     x = conv_block(
         x,
@@ -141,12 +142,12 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
         use_bn=False,
         use_bias=True,
         use_dropout=False,
-        # REVIEW: dropout was here (0.3)
+        # dropout (0.3) removed
     )
     
     # Flatten the output and add a dense layer with no activation for a single critic score
     x = layers.Flatten()(x)
-    # REVIEW: drop out was here (0.3)
+    # dropout (0.3) removed
     x = layers.Dense(1)(x)
     
     # Define the model with both inputs
@@ -299,100 +300,6 @@ def get_generator_model(noise_dim_shape: int, num_classes: int, model_training_o
     print(f"Visualization of architecture saved to: {model_visualization_path}")
     print(f"Model saved for visualization with netron.app to: {model_netron_path}\n")
     return generator_model
-
-
-@keras.saving.register_keras_serializable(package="wasserstein_loss", name="wasserstein_loss")
-def wasserstein_loss(y_true, y_pred):
-    return -tf.reduce_mean(y_true * y_pred)
-
-
-@keras.utils.register_keras_serializable(package="Custom")
-class RandomWeightedAverage(layers.Layer):
-    """
-    A custom Keras layer that computes a random weighted average 
-    between real and fake images. This is typically used in 
-    Wasserstein GAN with Gradient Penalty (WGAN-GP).
-    """
-    def __init__(self, **kwargs):
-        super(RandomWeightedAverage, self).__init__(**kwargs)
-
-    def call(self, inputs, training=None):
-        """
-        Computes the random weighted average.
-
-        Args:
-            inputs (list): A list of two tensors:
-                - real_imgs: Tensor of real images.
-                - fake_imgs: Tensor of fake images.
-        
-        Returns:
-            tf.Tensor: Tensor containing the interpolated images.
-        """
-        real_imgs, fake_imgs = inputs
-        
-        # Determine batch size dynamically
-        batch_size = keras.backend.shape(real_imgs)[0]
-        
-        # Generate random weights using keras.random.uniform
-        alpha = keras.random.uniform(
-            shape=(batch_size, 1, 1, 1), 
-            minval=0.0, 
-            maxval=1.0
-        )
-        
-        # Compute the weighted combination of the inputs
-        return (alpha * real_imgs) + ((1 - alpha) * fake_imgs)
-
-    def get_config(self):
-        """
-        Returns the configuration of the layer for serialization.
-        """
-        config = super(RandomWeightedAverage, self).get_config()
-        return config
-
-
-
-def gradient_penalty_loss(y_true, y_pred, interpolated_samples):
-    """
-    Computes the gradient penalty loss for Wasserstein GAN with Gradient Penalty (WGAN-GP).
-    
-    Args:
-        y_true (tf.Tensor): Dummy tensor for compatibility with Keras loss functions.
-        y_pred (tf.Tensor): Predicted output from the critic for the interpolated samples.
-        interpolated_samples (tf.Tensor): Samples interpolated between real and fake images.
-    
-    Returns:
-        tf.Tensor: Scalar tensor representing the gradient penalty loss.
-    """
-    # Compute gradients of y_pred with respect to interpolated_samples
-    gradients = tf.gradients(y_pred, interpolated_samples)[0]
-    
-    # Compute the L2 norm of the gradients
-    gradients_l2_norm = tf.sqrt(
-        tf.reduce_sum(tf.square(gradients), axis=tf.range(1, tf.rank(gradients)))
-    )
-    
-    # Compute the gradient penalty
-    gradient_penalty = tf.square(1.0 - gradients_l2_norm)
-    
-    # Return the mean of the gradient penalty
-    return tf.reduce_mean(gradient_penalty)
-
-
-@keras.saving.register_keras_serializable(package="critic_loss", name="critic_loss")
-def critic_loss(real_img, fake_img):
-    # Define the loss functions for the critic,
-    # which should be (fake_loss - real_loss).
-    # We will add the gradient penalty later to this loss function.
-    real_loss = tf.reduce_mean(real_img)
-    fake_loss = tf.reduce_mean(fake_img)
-    return fake_loss - real_loss
-
-
-@keras.saving.register_keras_serializable(package="generator_loss", name="generator_loss")
-def generator_loss(fake_img):
-    # Define the loss functions for the generator.
-    return -tf.reduce_mean(fake_img)
 
 
 @keras.saving.register_keras_serializable(package="custom_wgan_gp", name="custom_wgan_gp")
