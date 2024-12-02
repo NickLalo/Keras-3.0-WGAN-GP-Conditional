@@ -47,7 +47,7 @@ def parse_arguments():
         )
     # noise dimension
     parser.add_argument(
-        "--noise_dim",
+        "--noise_shape",
         type=int,
         default=128,
         help="The dimension of the noise vector for the generator.",

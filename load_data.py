@@ -56,28 +56,31 @@ def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batc
     # MNIST images are (28, 28) (W x H) but our model needs a channel dimension (28, 28, 1) (W x H x C) so we add a singleton layer to the end
     train_images = np.expand_dims(train_images, axis=-1)
     
-    # get the number of samples in the dataset (as a batched dataset makes it hard to get the exact number of samples)
-    samples_per_epoch = len(train_images)
-    
     # Create a tf.data.Dataset object for the training data
-    buffer_size = min(len(train_images), 1024)
+    buffer_size = min(len(train_images), 1024)  # ensure that the buffer size is not greater than the dataset size when running with a testing subset
     train_dataset = tf.data.Dataset.from_tensor_slices((train_images, train_labels))  # works seamlessly with numpy arrays
+    # Make an infinite dataset
     train_dataset = train_dataset.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)
+    # TODO: swap out this line below for an infinite dataset
+    # train_dataset = train_dataset.repeat().shuffle(buffer_size).batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)
     
-    # determine the shape of a single image sample
-    img_shape = train_dataset.element_spec[0].shape[1:]
-    
-    # get the number of classes in the dataset
+    # get some info about the dataset
+    samples_per_epoch = len(train_images)
+    img_shape = train_dataset.element_spec[0].shape[1:] # single image shape
     unique_labels = np.unique(train_labels)
     num_classes = len(unique_labels)
     
     if verbose:
-        print(f"\nnumber of samples in the train_dataset: {samples_per_epoch}")
+        print(f"\n{'#'*60} DATASET LOADED SUCCESSFULLY {'#'*60}")
+        print(f"Number of training samples: {len(train_images)}")
+        print(f"Min pixel value in the dataset: {np.min(train_images)}")
+        print(f"Max pixel value in the dataset: {np.max(train_images)}")
         print(f"Type of train_dataset: {type(train_dataset)}")
         print(f"Shape of train_dataset: {train_dataset.element_spec}")
         print(f"Shape of a single image: {img_shape}")
         print(f"Unique labels: {unique_labels}")
-        print(f"Number of classes: {num_classes}\n")
+        print(f"Number of classes: {num_classes}")
+        print(f"{'#'*149}\n")
     
     return train_dataset, img_shape, num_classes, samples_per_epoch
 
@@ -85,9 +88,6 @@ def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batc
 if __name__ == "__main__":
     train_dataset, img_shape, number_of_classes, samples_per_epoch = load_mnist_data_for_gan()
     
-    number_of_batches = len(train_dataset)
     real_images, real_labels = next(iter(train_dataset))
-    
-    print(f"Number of batches in the train_dataset: {number_of_batches}")
     print(f"Shape of the real_images: {real_images.shape}")
     print(f"Shape of the real_labels: {real_labels.shape}")

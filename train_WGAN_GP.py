@@ -23,7 +23,7 @@ if gpus:
     except RuntimeError as e:
         print(e)
 
-from model_and_callbacks import get_discriminator_model, get_generator_model, Training_Monitor, WGAN_GP, discriminator_loss, generator_loss
+from model_and_callbacks import get_critic_model, get_generator_model, Training_Monitor, WGAN_GP
 from utils import print_fresh_start_warning_message, get_last_checkpoint_dir_and_file, parse_arguments
 from load_data import load_mnist_data_for_gan
 
@@ -34,7 +34,7 @@ if __name__ == "__main__":
     # Parse arguments to get the hyperparameters for the model run
     args = parse_arguments()
     batch_size = args.batch_size
-    noise_dim = args.noise_dim
+    noise_shape = args.noise_shape
     debug_run = args.debug_run
     fresh_start = args.fresh_start
     dataset_subset_percentage = args.dataset_subset_percentage
@@ -46,6 +46,11 @@ if __name__ == "__main__":
     else:
         epochs = args.epochs
     
+    # TODO: remove these hardcoded values after testing code
+    fresh_start = True
+    dataset_subset_percentage = 0.2
+    epochs = 500
+    
     # ensure the model_training_output and model_checkpoints directories exist
     model_training_output_dir = Path("model_training_output")
     model_checkpoints_dir = model_training_output_dir.joinpath("model_checkpoints")
@@ -55,7 +60,7 @@ if __name__ == "__main__":
     # delete ALL files in the model_training_output directory for a fresh start
     if fresh_start:
         # print out a big warning message that gives some time to cancel before the files are deleted
-        print_fresh_start_warning_message()
+        # print_fresh_start_warning_message()  # TODO: put this back after testing code
         
         # reset the model_training_output directory
         shutil.rmtree(model_training_output_dir)
@@ -69,13 +74,17 @@ if __name__ == "__main__":
         last_checkpoint_dir_path, last_model_checkpoint_path = get_last_checkpoint_dir_and_file(model_checkpoints_dir)
     
     # Load the MNIST dataset for training a GAN
-    train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(debug_run, dataset_subset_percentage, batch_size, verbose=True)
+    train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(debug_run, dataset_subset_percentage, batch_size)
     
-    disc_model = get_discriminator_model(img_shape, num_classes)
-    # disc_model.summary()
+    # initialize the critic and generator models
+    critic_model = get_critic_model(img_shape, num_classes, model_training_output_dir)
+    generator_model = get_generator_model(noise_shape, num_classes, model_training_output_dir)
     
-    gen_model = get_generator_model(noise_dim, num_classes)
-    # gen_model.summary()
+    # REVIEW: there are better hardcoded values for the betas that I should try out first
+    # REVIEW: consider making the learning rate higher for the critic (I think that is the one? look in the notes and in the book)
+    # Instantiate the optimizers
+    generator_optimizer = keras.optimizers.Adam(learning_rate=0.00005, beta_1=0.5, beta_2=0.9)
+    critic_optimizer = keras.optimizers.Adam(learning_rate=0.00005, beta_1=0.5, beta_2=0.9)
     
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
@@ -83,7 +92,7 @@ if __name__ == "__main__":
         model_checkpoints_dir,
         num_classes=num_classes,
         num_img=20,
-        latent_dim=noise_dim,
+        latent_dim=noise_shape,
         grid_size=(4, 5),
         samples_per_epoch=samples_per_epoch,
         last_checkpoint_dir_path=last_checkpoint_dir_path
@@ -93,24 +102,19 @@ if __name__ == "__main__":
     if fresh_start:
         # Get the wgan_gp model
         wgan_gp = WGAN_GP(
-            discriminator=disc_model,
-            generator=gen_model,
+            critic=critic_model,
+            generator=generator_model ,
             num_classes=num_classes,
-            latent_dim=noise_dim,
-            discriminator_input_shape=img_shape,
-            discriminator_extra_steps=5,
+            latent_dim=noise_shape,
+            critic_input_shape=img_shape,
+            critic_extra_steps=5,
+            gp_weight=10.0,
             )
-        
-        # Instantiate the optimizer for both networks
-        generator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
-        discriminator_optimizer = keras.optimizers.Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.9)
         
         # Compile the wgan_gp model
         wgan_gp.compile(
-            disc_optimizer=discriminator_optimizer,
+            critic_optimizer=critic_optimizer,
             gen_optimizer=generator_optimizer,
-            disc_loss_fn=discriminator_loss,
-            gen_loss_fn=generator_loss,
             )
     else:
         # load the last model checkpoint from the last training session

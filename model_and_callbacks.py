@@ -8,11 +8,14 @@ https://keras.io/examples/generative/wgan_gp/
 
 import os
 import shutil
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import keras
-import tensorflow as tf
+# REVIEW: remove this line if the code runs time
+# from keras.utils import plot_model  # type: ignore # because keras.utils.plot_model is not recognized by mypy
 from keras import layers
+import tensorflow as tf
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use("Agg")  # set to use the "Agg" to avoid tkinter error
@@ -57,76 +60,116 @@ def conv_block(
     return x
 
 
-@keras.saving.register_keras_serializable(package="discriminator_model", name="discriminator_model")
-def get_discriminator_model(img_shape, num_classes):
+@keras.saving.register_keras_serializable(package="critic_model", name="critic_model")
+def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_dir: Path):
+    """
+    initialize the critic using the Keras Functional API. The critic model takes as input an image tensor and a label tensor and outputs a single
+    value. The label tensor is converted to a one-hot tensor, passed through a fully connected layer to reshape it to the same shape as the image
+    and then concatenated with the image tensor. This combined tensor is passed through the convolutional layers and lastly through a dense layer
+    without an activation function to output the critic's score for the input image-label pair.
+    
+    REVIEW: I removed dropout from the critic model, but could add it back if the model is overfitting.
+    
+    This function also:
+        1. saves a copy of the model summary to a text file in the model_training_output directory
+        2. visualizes the model architecture with keras.utils.plot_model
+        3. saves a copy of the model for visualization with netron.app
+    
+    Parameters:
+        img_shape: tuple, the shape of the input image tensor (height, width, channels)
+        num_classes: int, the number of classes in the dataset
+        model_training_output_dir: Path, the directory to save outputs from the model training
+    Returns:
+        critic_model: keras.Model, the compiled critic model
+    """
     # Image input
     img_input = layers.Input(shape=img_shape)
     
-    # Label input
-    labels = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming labels are integers
-    labels_one_hot = layers.Embedding(num_classes, num_classes)(labels)  # Convert to one-hot
-    labels_one_hot = layers.Flatten()(labels_one_hot)  # Flatten embedding output
+    # class input
+    class_input = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming labels are integers
+    class_input_one_hot = layers.Embedding(num_classes, num_classes)(class_input)  # Convert to one-hot
+    class_input_one_hot = layers.Flatten()(class_input_one_hot)  # Flatten embedding output
     
     # Expand labels to match the image dimensions
-    label_tensor = layers.Dense(np.prod(img_shape))(labels_one_hot)  # Fully connected layer
-    label_tensor = layers.Reshape(img_shape)(label_tensor)  # Reshape to match image shape
+    # Fully connected layer to reshape one-hot labels to a tensor the same shape as a flattened image
+    label_tensor = layers.Dense(np.prod(img_shape))(class_input_one_hot)
+    # Reshape to match image shape (height, width, channels)
+    label_tensor = layers.Reshape(img_shape)(label_tensor)
     
     # Concatenate image and label tensors
     combined_input = layers.Concatenate()([img_input, label_tensor])
     
-    # Discriminator architecture
+    # critic architecture
     x = conv_block(
         combined_input,
         64,
+        activation=layers.LeakyReLU(0.2),
         kernel_size=(5, 5),
         strides=(2, 2),
         use_bn=False,
         use_bias=True,
-        activation=layers.LeakyReLU(0.2),
         use_dropout=False,
-        drop_value=0.3,
     )
     x = conv_block(
         x,
         128,
+        activation=layers.LeakyReLU(0.2),
         kernel_size=(5, 5),
         strides=(2, 2),
         use_bn=False,
-        activation=layers.LeakyReLU(0.2),
         use_bias=True,
-        use_dropout=True,
-        drop_value=0.3,
+        use_dropout=False,
+        # REVIEW: dropout was here (0.3)
     )
     x = conv_block(
         x,
         256,
+        activation=layers.LeakyReLU(0.2),
         kernel_size=(5, 5),
         strides=(2, 2),
         use_bn=False,
-        activation=layers.LeakyReLU(0.2),
         use_bias=True,
-        use_dropout=True,
-        drop_value=0.3,
+        use_dropout=False,
+        # REVIEW: dropout was here (0.3)
     )
     x = conv_block(
         x,
         512,
+        activation=layers.LeakyReLU(0.2),
         kernel_size=(5, 5),
         strides=(2, 2),
         use_bn=False,
-        activation=layers.LeakyReLU(0.2),
         use_bias=True,
         use_dropout=False,
-        drop_value=0.3,
+        # REVIEW: dropout was here (0.3)
     )
     
+    # Flatten the output and add a dense layer with no activation for a single critic score
     x = layers.Flatten()(x)
-    x = layers.Dropout(0.2)(x)
+    # REVIEW: drop out was here (0.3)
     x = layers.Dense(1)(x)
     
     # Define the model with both inputs
-    disc_model = keras.models.Model([img_input, labels], x, name="discriminator")
-    return disc_model
+    critic_model = keras.models.Model([img_input, class_input], x, name="critic")
+    
+    # save a copy of the model summary to a text file
+    model_summary_path = model_training_output_dir.joinpath("critic_model_summary.txt")
+    with open(model_summary_path, "w") as file:
+        critic_model.summary(line_length=150, print_fn=lambda x: file.write(x + "\n"))
+    
+    # visualize the model architecture with keras.utils.plot_model
+    model_visualization_path = model_training_output_dir.joinpath("critic_model_architecture.png")
+    keras.utils.plot_model(critic_model, to_file=model_visualization_path, show_shapes=True, show_layer_names=True)
+    
+    # save a copy of the model for visualization with netron.app
+    model_netron_path = model_training_output_dir.joinpath("critic_model_for_netron_app.keras")
+    critic_model.save(model_netron_path)
+    
+    print(f"\nDone initializing the critic model.")
+    print(f"Model summary saved to: {model_summary_path}")
+    print(f"Visualization of architecture saved to: {model_visualization_path}")
+    print(f"Model saved for visualization with netron.app to: {model_netron_path}\n")
+    return critic_model
 
 
 def upsample_block(
@@ -142,6 +185,23 @@ def upsample_block(
         use_dropout=False,
         drop_value=0.3,
     ):
+    """
+    Creates an upsampling block used by the generator with optional batch normalization and dropout.
+    Parameters:
+    x (tensor): Input tensor.
+    filters (int): Number of filters for the Conv2D layer.
+    activation (function): Activation function to use.
+    kernel_size (tuple): Size of the convolution kernel. Default is (3, 3).
+    strides (tuple): Strides for the convolution. Default is (1, 1).
+    up_size (tuple): Size for the upsampling. Default is (2, 2).
+    padding (str): Padding type for the Conv2D layer. Default is "same".
+    use_bn (bool): Whether to use batch normalization. Default is False.
+    use_bias (bool): Whether the Conv2D layer uses a bias vector. Default is True.
+    use_dropout (bool): Whether to use dropout. Default is False.
+    drop_value (float): Dropout rate. Default is 0.3.
+    Returns:
+    tensor: Output tensor after applying upsampling, convolution, optional batch normalization, activation, and optional dropout.
+    """
     x = layers.UpSampling2D(up_size)(x)
     x = layers.Conv2D(
         filters, kernel_size, strides=strides, padding=padding, use_bias=use_bias
@@ -158,17 +218,27 @@ def upsample_block(
 
 
 @keras.saving.register_keras_serializable(package="generator_model", name="generator_model")
-def get_generator_model(noise_dim, num_classes):
+def get_generator_model(noise_dim_shape: int, num_classes: int, model_training_output_dir: Path):
+    """
+    Builds and returns a generator model for a Wasserstein GAN with Gradient Penalty (WGAN-GP).
+    Parameters:
+        noise_dim_shape (int): Dimension of the noise vector input.
+        num_classes (int): Number of classes for the class conditional input.
+        model_training_output_dir (Path): Directory path for saving model training outputs.
+    Returns:
+        keras.models.Model: A Keras Model representing the generator.
+    """
+    # model inputs will look like this: [noise_input, class_input]
     # Noise input
-    noise = layers.Input(shape=(noise_dim,))
+    noise_input = layers.Input(shape=(noise_dim_shape,))
     
-    # Label input
-    labels = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming labels are integers
-    labels_one_hot = layers.Embedding(num_classes, num_classes)(labels)  # Convert to one-hot
-    labels_one_hot = layers.Flatten()(labels_one_hot)  # Flatten embedding output
+    # class input (conditional input)
+    class_input = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming class_inputs are integers
+    class_input_one_hot = layers.Embedding(num_classes, num_classes)(class_input)  # Convert to one-hot
+    class_input_one_hot = layers.Flatten()(class_input_one_hot)  # Flatten embedding output
     
-    # Concatenate noise and labels
-    x = layers.Concatenate()([noise, labels_one_hot])
+    # Concatenate noise input and class input
+    x = layers.Concatenate()([noise_input, class_input_one_hot])
     
     # Generator architecture
     x = layers.Dense(4 * 4 * 256, use_bias=False)(x)
@@ -197,20 +267,121 @@ def get_generator_model(noise_dim, num_classes):
         use_dropout=False,
     )
     x = upsample_block(
-        x, 1, layers.Activation("tanh"), strides=(1, 1), use_bias=False, use_bn=True
+        x, 
+        1, 
+        layers.Activation("tanh"), 
+        strides=(1, 1), 
+        use_bias=False, 
+        use_bn=True,
     )
-    # At this point, we have an output which has the same shape as the input, (32, 32, 1).
+    # At this point, we have an output which has a shape of (32, 32, 1) but we want our output to be (28, 28, 1).
     # We will use a Cropping2D layer to make it (28, 28, 1).
     x = layers.Cropping2D((2, 2))(x)
     
     # Define the model with both inputs
-    gen_model = keras.models.Model([noise, labels], x, name="generator")
-    return gen_model
+    generator_model = keras.models.Model([noise_input, class_input], x, name="generator")
+    
+    # save a copy of the model summary to a text file
+    model_summary_path = model_training_output_dir.joinpath("generator_model_summary.txt")
+    with open(model_summary_path, "w") as file:
+        generator_model.summary(line_length=150, print_fn=lambda x: file.write(x + "\n"))
+    
+    # visualize the model architecture with keras.utils.plot_model
+    model_visualization_path = model_training_output_dir.joinpath("generator_model_architecture.png")
+    keras.utils.plot_model(generator_model, to_file=model_visualization_path, show_shapes=True, show_layer_names=True)
+    
+    # save a copy of the model for visualization with netron.app
+    model_netron_path = model_training_output_dir.joinpath("generator_model_for_netron_app.keras")
+    generator_model.save(model_netron_path)
+    
+    print(f"\nDone initializing the generator model.")
+    print(f"Model summary saved to: {model_summary_path}")
+    print(f"Visualization of architecture saved to: {model_visualization_path}")
+    print(f"Model saved for visualization with netron.app to: {model_netron_path}\n")
+    return generator_model
 
 
-@keras.saving.register_keras_serializable(package="discriminator_loss", name="discriminator_loss")
-def discriminator_loss(real_img, fake_img):
-    # Define the loss functions for the discriminator,
+@keras.saving.register_keras_serializable(package="wasserstein_loss", name="wasserstein_loss")
+def wasserstein_loss(y_true, y_pred):
+    return -tf.reduce_mean(y_true * y_pred)
+
+
+@keras.utils.register_keras_serializable(package="Custom")
+class RandomWeightedAverage(layers.Layer):
+    """
+    A custom Keras layer that computes a random weighted average 
+    between real and fake images. This is typically used in 
+    Wasserstein GAN with Gradient Penalty (WGAN-GP).
+    """
+    def __init__(self, **kwargs):
+        super(RandomWeightedAverage, self).__init__(**kwargs)
+
+    def call(self, inputs, training=None):
+        """
+        Computes the random weighted average.
+
+        Args:
+            inputs (list): A list of two tensors:
+                - real_imgs: Tensor of real images.
+                - fake_imgs: Tensor of fake images.
+        
+        Returns:
+            tf.Tensor: Tensor containing the interpolated images.
+        """
+        real_imgs, fake_imgs = inputs
+        
+        # Determine batch size dynamically
+        batch_size = keras.backend.shape(real_imgs)[0]
+        
+        # Generate random weights using keras.random.uniform
+        alpha = keras.random.uniform(
+            shape=(batch_size, 1, 1, 1), 
+            minval=0.0, 
+            maxval=1.0
+        )
+        
+        # Compute the weighted combination of the inputs
+        return (alpha * real_imgs) + ((1 - alpha) * fake_imgs)
+
+    def get_config(self):
+        """
+        Returns the configuration of the layer for serialization.
+        """
+        config = super(RandomWeightedAverage, self).get_config()
+        return config
+
+
+
+def gradient_penalty_loss(y_true, y_pred, interpolated_samples):
+    """
+    Computes the gradient penalty loss for Wasserstein GAN with Gradient Penalty (WGAN-GP).
+    
+    Args:
+        y_true (tf.Tensor): Dummy tensor for compatibility with Keras loss functions.
+        y_pred (tf.Tensor): Predicted output from the critic for the interpolated samples.
+        interpolated_samples (tf.Tensor): Samples interpolated between real and fake images.
+    
+    Returns:
+        tf.Tensor: Scalar tensor representing the gradient penalty loss.
+    """
+    # Compute gradients of y_pred with respect to interpolated_samples
+    gradients = tf.gradients(y_pred, interpolated_samples)[0]
+    
+    # Compute the L2 norm of the gradients
+    gradients_l2_norm = tf.sqrt(
+        tf.reduce_sum(tf.square(gradients), axis=tf.range(1, tf.rank(gradients)))
+    )
+    
+    # Compute the gradient penalty
+    gradient_penalty = tf.square(1.0 - gradients_l2_norm)
+    
+    # Return the mean of the gradient penalty
+    return tf.reduce_mean(gradient_penalty)
+
+
+@keras.saving.register_keras_serializable(package="critic_loss", name="critic_loss")
+def critic_loss(real_img, fake_img):
+    # Define the loss functions for the critic,
     # which should be (fake_loss - real_loss).
     # We will add the gradient penalty later to this loss function.
     real_loss = tf.reduce_mean(real_img)
@@ -231,23 +402,23 @@ class WGAN_GP(keras.Model):
     """
     def __init__(
         self,
-        discriminator,
+        critic,
         generator,
         num_classes,
         latent_dim,
-        discriminator_extra_steps=5,
-        discriminator_input_shape=None,
+        critic_extra_steps=5,
+        critic_input_shape=None,
         gp_weight=10.0,
         **kwargs
     ):
         super().__init__(**kwargs)
-        self.discriminator = discriminator
+        self.critic = critic
         self.generator = generator
         self.num_classes = num_classes
         self.latent_dim = latent_dim
-        # in a WGAN-GP, the discriminator trains for a number of steps and then generator trains for one step
-        self.num_disc_steps = discriminator_extra_steps
-        self.disc_input_shape = discriminator_input_shape
+        # in a WGAN-GP, the critic trains for a number of steps and then generator trains for one step
+        self.num_critic_steps = critic_extra_steps
+        self.critic_input_shape = critic_input_shape
         self.gp_weight = gp_weight
         
         # set dummy value for self.optimizer avoid errors at the end of .fit() call
@@ -257,39 +428,26 @@ class WGAN_GP(keras.Model):
         self.build()
         return
     
-    # def compile(self, disc_optimizer, gen_optimizer, disc_loss_fn, gen_loss_fn):
-    def compile(self, disc_optimizer=None, gen_optimizer=None, disc_loss_fn=None, gen_loss_fn=None):
-        super().compile()
-        self.disc_optimizer = disc_optimizer
+    def compile(self, critic_optimizer=None, gen_optimizer=None):
+        super(WGAN_GP, self).compile()
+        self.critic_optimizer = critic_optimizer
         self.gen_optimizer = gen_optimizer
-        self.disc_loss_fn = disc_loss_fn
-        self.gen_loss_fn = gen_loss_fn
         return
     
-    def gradient_penalty(self, batch_size, real_images, fake_images, real_labels):
-        """
-        Calculates the gradient penalty.
-        
-        This loss is calculated on an interpolated image
-        and added to the discriminator loss.
-        """
-        # Get the interpolated image
-        alpha = tf.random.uniform([batch_size, 1, 1, 1], 0.0, 1.0)
+    def gradient_penalty(self, batch_size, real_images, fake_images, image_one_hot_labels):
+        alpha = tf.random.normal([batch_size, 1, 1, 1], 0.0, 1.0)
         diff = fake_images - real_images
         interpolated = real_images + alpha * diff
         
         with tf.GradientTape() as gp_tape:
             gp_tape.watch(interpolated)
-            
-            # 1. Pass interpolated images and real labels to the discriminator
-            pred = self.discriminator([interpolated, real_labels], training=True)
-            
-            # 2. Calculate the gradients w.r.t to this interpolated image
-            grads = gp_tape.gradient(pred, [interpolated])[0]
-            
-            # 3. Calculate the norm of the gradients.
-            norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
-            gp = tf.reduce_mean((norm - 1.0) ** 2)
+            pred = self.critic(
+                [interpolated, image_one_hot_labels], training=True
+            )
+        
+        grads = gp_tape.gradient(pred, [interpolated])[0]
+        norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
+        gp = tf.reduce_mean((norm - 1.0) ** 2)
         return gp
     
     def train_step(self, batch_data):
@@ -301,52 +459,54 @@ class WGAN_GP(keras.Model):
         # For each batch, we are going to perform the
         # following steps as laid out in the original paper:
         # 1. Train the generator and get the generator loss
-        # 2. Train the discriminator and get the discriminator loss
+        # 2. Train the critic and get the critic loss
         # 3. Calculate the gradient penalty
         # 4. Multiply this gradient penalty with a constant weight factor
-        # 5. Add the gradient penalty to the discriminator loss
-        # 6. Return the generator and discriminator losses as a loss dictionary
+        # 5. Add the gradient penalty to the critic loss
+        # 6. Return the generator and critic losses as a loss dictionary
         
-        # # Initialize lists to track discriminator scores on real and fake images
-        discriminator_real_scores = []
-        discriminator_fake_scores = []
+        # # Initialize lists to track critic scores on real and fake images
+        critic_real_scores = []
+        critic_fake_scores = []
         gradient_penalties = []
-        discriminator_losses = []
+        critic_losses = []
         
-        ####################################### Train the discriminator #######################################
-        for _ in range(self.num_disc_steps):
+        ####################################### Train the critic #######################################
+        for _ in range(self.num_critic_steps):
             # Get a batch of random latent vectors
             random_latent_vectors = tf.random.normal(shape=(batch_size, self.latent_dim))
             
             with tf.GradientTape() as tape:
-                # Generate fake images using the real labels for training the discriminator
+                # Generate fake images using the real labels for training the critic
                 fake_images = self.generator([random_latent_vectors, real_labels], training=True)
                 
-                # Get the discriminator scores (logits) for the fake and real images
-                fake_logits = self.discriminator([fake_images, real_labels], training=True)
-                real_logits = self.discriminator([real_images, real_labels], training=True)
+                # Get the critic scores (logits) for the fake and real images
+                fake_logits = self.critic([fake_images, real_labels], training=True)
+                real_logits = self.critic([real_images, real_labels], training=True)
                 
                 # Append the mean scores to track them
-                discriminator_real_scores.append(tf.reduce_mean(real_logits))
-                discriminator_fake_scores.append(tf.reduce_mean(fake_logits))
+                critic_real_scores.append(tf.reduce_mean(real_logits))
+                critic_fake_scores.append(tf.reduce_mean(fake_logits))
                 
-                # Calculate the discriminator loss
-                disc_cost = self.disc_loss_fn(real_img=real_logits, fake_img=fake_logits)
+                # Calculate the critic loss
+                # critic_cost = self.critic_loss_fn(real_img=real_logits, fake_img=fake_logits)
+                # Calculate the critic loss using the Wasserstein loss
+                critic_wasserstein_loss = tf.reduce_mean(fake_logits) - tf.reduce_mean(real_logits)
                 
                 # Calculate the gradient penalty
                 gp = self.gradient_penalty(batch_size, real_images, fake_images, real_labels)
                 
-                # Add the gradient penalty to the discriminator loss
-                disc_loss = disc_cost + gp * self.gp_weight
+                # Add the gradient penalty to the critic loss
+                critic_loss = critic_wasserstein_loss + gp * self.gp_weight
                 
-                # Append the gradient penalty and discriminator loss to track them
+                # Append the gradient penalty and critic loss to track them
                 gradient_penalties.append(gp)
-                discriminator_losses.append(disc_loss)
+                critic_losses.append(critic_loss)
             
-            # Get the gradients for the discriminator loss
-            disc_gradient = tape.gradient(disc_loss, self.discriminator.trainable_variables)
-            # Update the discriminator's weights
-            self.disc_optimizer.apply_gradients(zip(disc_gradient, self.discriminator.trainable_variables))
+            # Get the gradients for the critic loss
+            critic_gradient = tape.gradient(critic_loss, self.critic.trainable_variables)
+            # Update the critic's weights
+            self.critic_optimizer.apply_gradients(zip(critic_gradient, self.critic.trainable_variables))
             
             # REVIEW: consider resampling the dataset to get a new batch of real images and labels here to avoid training on the same batch
             #         multiple times. This could be achieved by making a copy of the dataset a class attribute.
@@ -361,11 +521,11 @@ class WGAN_GP(keras.Model):
             # Generate fake images using real labels for training the generator
             generated_images = self.generator([random_latent_vectors, real_labels], training=True)
             
-            # Get the discriminator scores (logits) for the generated images
-            gen_img_logits = self.discriminator([generated_images, real_labels], training=True)
+            # Get the critic scores (logits) for the generated images
+            gen_img_logits = self.critic([generated_images, real_labels], training=True)
             
             # Calculate the generator loss
-            gen_loss = self.gen_loss_fn(gen_img_logits)
+            gen_loss = -tf.reduce_mean(gen_img_logits)
         
         # Get the gradients for the generator loss
         gen_gradient = tape.gradient(gen_loss, self.generator.trainable_variables)
@@ -373,25 +533,25 @@ class WGAN_GP(keras.Model):
         self.gen_optimizer.apply_gradients(zip(gen_gradient, self.generator.trainable_variables))
         
         # # Calculate the average scores for real and fake images for this batch
-        avg_real_score = tf.reduce_mean(discriminator_real_scores)
-        avg_fake_score = tf.reduce_mean(discriminator_fake_scores)
+        avg_real_score = tf.reduce_mean(critic_real_scores)
+        avg_fake_score = tf.reduce_mean(critic_fake_scores)
         avg_gradient_penalty = tf.reduce_mean(gradient_penalties)
-        avg_disc_loss = tf.reduce_mean(discriminator_losses)
+        avg_critic_loss = tf.reduce_mean(critic_losses)
         
         return_dict = {
-            "disc_loss": avg_disc_loss,
+            "critic_loss": avg_critic_loss,
             "gen_loss": gen_loss,
-            "disc_loss_real": avg_real_score,
-            "disc_loss_fake": avg_fake_score,
+            "critic_loss_real": avg_real_score,
+            "critic_loss_fake": avg_fake_score,
             "gradient_penalty": avg_gradient_penalty
             }
         
         return return_dict
     
     def build(self, input_shape=None):
-        # Explicitly build the generator and discriminator models
+        # Explicitly build the generator and critic models
         self.generator.build(input_shape=(None, self.latent_dim))
-        self.discriminator.build(input_shape=self.disc_input_shape)
+        self.critic.build(input_shape=self.critic_input_shape)
         super().build(input_shape)
         return
     
@@ -407,11 +567,11 @@ class WGAN_GP(keras.Model):
         
         # get extra configurations for custom model attributes (not Python objects like ints, strings, etc.)
         custom_config = {
-            "discriminator": keras.saving.serialize_keras_object(self.discriminator),
+            "critic": keras.saving.serialize_keras_object(self.critic),
             "generator": keras.saving.serialize_keras_object(self.generator),
             "num_classes": self.num_classes,
             "latent_dim": self.latent_dim,
-            "discriminator_extra_steps": self.num_disc_steps,
+            "critic_extra_steps": self.num_critic_steps,
             "gp_weight": self.gp_weight,
         }
         
@@ -428,11 +588,11 @@ class WGAN_GP(keras.Model):
         """
         # These parameters will be serialized at saving time
         config = {
-            "disc_optimizer": self.disc_optimizer.get_config(),
-            "disc_optimizer_state": [v.numpy() for v in self.disc_optimizer.variables],
+            "critic_optimizer": self.critic_optimizer.get_config(),
+            "critic_optimizer_state": [v.numpy() for v in self.critic_optimizer.variables],
             "gen_optimizer": self.gen_optimizer.get_config(),
             "gen_optimizer_state": [v.numpy() for v in self.gen_optimizer.variables],
-            "disc_loss_fn": keras.saving.serialize_keras_object(self.disc_loss_fn),
+            "critic_loss_fn": keras.saving.serialize_keras_object(self.critic_loss_fn),
             "gen_loss_fn": keras.saving.serialize_keras_object(self.gen_loss_fn),
         }
         return config
@@ -445,21 +605,21 @@ class WGAN_GP(keras.Model):
         Runs as part of the loading process to deserialize the model when calling keras.models.load_model()
         Runs first to deserialize the model configuration
         """
-        # get the discriminator and generator models from the config
-        discriminator = keras.saving.deserialize_keras_object(config.pop("discriminator"), custom_objects=custom_objects)
+        # get the critic and generator models from the config
+        critic = keras.saving.deserialize_keras_object(config.pop("critic"), custom_objects=custom_objects)
         generator = keras.saving.deserialize_keras_object(config.pop("generator"), custom_objects=custom_objects)
         num_classes = config.pop("num_classes")
         latent_dim = config.pop("latent_dim")
-        discriminator_extra_steps = config.pop("discriminator_extra_steps")
+        critic_extra_steps = config.pop("critic_extra_steps")
         gp_weight = config.pop("gp_weight")
         
-        # create a new instance of the model with the discriminator and generator models (This calls the __init__ method)
+        # create a new instance of the model with the critic and generator models (This calls the __init__ method)
         model = cls(
-            discriminator=discriminator, 
+            critic=critic, 
             generator=generator,
             num_classes=num_classes,
             latent_dim=latent_dim, 
-            discriminator_extra_steps=discriminator_extra_steps, 
+            critic_extra_steps=critic_extra_steps, 
                     gp_weight=gp_weight)
         return model
     
@@ -471,9 +631,9 @@ class WGAN_GP(keras.Model):
         Runs after from_config() to deserialize the compiled parameters
         """
         # Deserialize the compiled parameters
-        self.disc_optimizer = keras.optimizers.Adam.from_config(config["disc_optimizer"])
-        self.disc_optimizer_state = config["disc_optimizer_state"]
-        for var, val in zip(self.disc_optimizer.variables, self.disc_optimizer_state):
+        self.critic_optimizer = keras.optimizers.Adam.from_config(config["critic_optimizer"])
+        self.critic_optimizer_state = config["critic_optimizer_state"]
+        for var, val in zip(self.critic_optimizer.variables, self.critic_optimizer_state):
             var.assign(val)
         
         self.gen_optimizer = keras.optimizers.Adam.from_config(config["gen_optimizer"])
@@ -481,14 +641,14 @@ class WGAN_GP(keras.Model):
         for var, val in zip(self.gen_optimizer.variables, self.gen_optimizer_state):
             var.assign(val)
             
-        self.disc_loss_fn = keras.saving.deserialize_keras_object(config["disc_loss_fn"])
+        self.critic_loss_fn = keras.saving.deserialize_keras_object(config["critic_loss_fn"])
         self.gen_loss_fn = keras.saving.deserialize_keras_object(config["gen_loss_fn"])
         
         # call the compile method to set the optimizer and loss functions
         self.compile(
-            disc_optimizer=self.disc_optimizer, 
+            critic_optimizer=self.critic_optimizer, 
             gen_optimizer=self.gen_optimizer, 
-            disc_loss_fn=self.disc_loss_fn, 
+            critic_loss_fn=self.critic_loss_fn, 
             gen_loss_fn=self.gen_loss_fn
         )
         return
@@ -601,15 +761,19 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # Log the loss metrics to the DataFrame
         self.log_loss_to_dataframe(logs)
         
-        # save a copy of the model to the current epoch checkpoint directory
-        model_save_path = self.this_epoch_checkpoint_dir.joinpath("model.keras")
-        self.model.save(model_save_path)
-        
         # Plot individual loss metrics
         self.create_loss_plots()
         
-        # Generate validation samples
-        self.generate_validation_samples()
+        epoch = len(self.loss_metrics_dataframe) + 1
+        if epoch % 10:
+            # REVIEW: put this back after testing code
+            # # save a copy of the model to the current epoch checkpoint directory
+            # model_save_path = self.this_epoch_checkpoint_dir.joinpath("model.keras")
+            # self.model.save(model_save_path)
+            
+            # REVIEW: put this back after testing code
+            # # Generate validation samples
+            self.generate_validation_samples()
         return
     
     def on_train_end(self, logs=None):
@@ -638,22 +802,22 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def log_loss_to_dataframe(self, logs):
         """
         Logs the loss metrics to a DataFrame and saves it to a CSV file.
-        This method extracts the discriminator and generator loss values from the provided logs dictionary,
+        This method extracts the critic and generator loss values from the provided logs dictionary,
         prints them, and appends them to an internal DataFrame. The DataFrame is then saved to a CSV file.
         Parameters:
             logs (dict): A dictionary containing the loss values with the following keys:
-                - "disc_loss": Discriminator total loss
-                - "disc_loss_real": Discriminator loss on real samples
-                - "disc_loss_fake": Discriminator loss on fake samples
-                - "gradient_penalty": Discriminator gradient penalty loss
+                - "critic_loss": critic total loss
+                - "critic_loss_real": critic loss on real samples
+                - "critic_loss_fake": critic loss on fake samples
+                - "gradient_penalty": critic gradient penalty loss
                 - "gen_loss": Generator loss
         Returns:
             None
         """
         # extract info from logs dictionary
-        disc_loss = float(logs["disc_loss"])
-        disc_loss_real = float(logs["disc_loss_real"])
-        disc_loss_fake = float(logs["disc_loss_fake"])
+        critic_loss = float(logs["critic_loss"])
+        critic_loss_real = float(logs["critic_loss_real"])
+        critic_loss_fake = float(logs["critic_loss_fake"])
         gradient_penalty = float(logs["gradient_penalty"])
         gen_loss = float(logs["gen_loss"])
         # start epoch count from 1 as we are saying: "These are metrics at the end of one epoch" for the first epoch
@@ -667,9 +831,9 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # create a new DataFrame row with the current epoch data
         new_row = pd.DataFrame([{
             "epoch": epoch,
-            "disc_loss": disc_loss,
-            "disc_loss_real": disc_loss_real,
-            "disc_loss_fake": disc_loss_fake,
+            "critic_loss": critic_loss,
+            "critic_loss_real": critic_loss_real,
+            "critic_loss_fake": critic_loss_fake,
             "gradient_penalty": gradient_penalty,
             "gen_loss": gen_loss,
             # calculate the number of samples trained on at the end of this epoch
@@ -700,7 +864,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         the number of samples trained on.
         """
         # Define list of individual loss columns to plot
-        loss_columns = ["disc_loss", "disc_loss_real", "disc_loss_fake", "gradient_penalty", "gen_loss"]
+        loss_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gradient_penalty", "gen_loss"]
         
         # Identify locations where model was loaded
         model_load_indices = self.loss_metrics_dataframe.loc[self.loss_metrics_dataframe['model_loaded'], 'epoch']
@@ -752,7 +916,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             plt.clf()
         
         ################################ Combined plot for specific losses ###############################
-        combined_loss_columns = ["disc_loss", "disc_loss_real", "disc_loss_fake", "gen_loss"]
+        combined_loss_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gen_loss"]
         fig, ax1 = plt.subplots(figsize=(10, 6))
         
         # Plot the loss metrics
@@ -785,10 +949,11 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # Save the combined plot to the current epoch checkpoint directory
         combined_plot_path = self.this_epoch_checkpoint_dir.joinpath("losses_combined.png")
         plt.savefig(combined_plot_path, dpi=200)
-        shutil.copy(combined_plot_path, self.model_training_output_dir.joinpath("losses_combined.png"))
+        combined_plot_main_dir_path = self.model_training_output_dir.joinpath("losses_combined.png")
+        shutil.copy(combined_plot_path, combined_plot_main_dir_path)
         plt.close()
         plt.clf()
-        print(f"\nCombined loss plot saved to: {combined_plot_path}")
+        print(f"\nCombined loss plot saved to: {combined_plot_main_dir_path}")
         
         ############################### create a plot to show memory usage over time ##############################
         fig, ax1 = plt.subplots(figsize=(10, 6))
@@ -864,7 +1029,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def generate_validation_samples(self):
         """
         Generates and saves a grid of validation images produced by the generator model, 
-        along with their discriminator scores. The images are saved to the current epoch 
+        along with their critic scores. The images are saved to the current epoch 
         checkpoint directory and a copy is saved to the model training output directory. 
         Additionally, a GIF of all saved images is generated every specified number of epochs.
         
@@ -879,8 +1044,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # Rescale the images from [-1, 1] to [0, 255]
         generated_images = (generated_images * 127.5) + 127.5
         
-        # Get discriminator scores for generated images using CPU
-        discriminator_scores = self.model.discriminator([generated_images, self.random_labels], training=False)
+        # Get critic scores for generated images using CPU
+        critic_scores = self.model.critic([generated_images, self.random_labels], training=False)
         
         # Creating a grid of images
         fig, axes = plt.subplots(self.grid_size[0], self.grid_size[1], figsize=(self.grid_size[1] * 2, self.grid_size[0] * 2))
@@ -892,8 +1057,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             img = keras.utils.array_to_img(img)
             axes[row, col].imshow(img)
             axes[row, col].axis('off')
-            # get the discriminator score for the generated image as a float value
-            score = discriminator_scores[i].numpy().item()
+            # get the critic score for the generated image as a float value
+            score = critic_scores[i].numpy().item()
             label = self.random_labels[i].numpy().item()
             axes[row, col].set_title(f'Label: {label} Score: {score:.2f}', fontsize=6)
         
@@ -917,9 +1082,10 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         plt.clf()
         plt.close()
         
+        # TODO: remove this later
         # every X number of epochs, generate a GIF of all the saved images
-        if epoch % self.gif_creation_frequency == 0 and epoch > 0:
-            self.generate_gif()
+        # if epoch % self.gif_creation_frequency == 0 and epoch > 0:
+        #     self.generate_gif()
         return
     
     def generate_gif(self):
