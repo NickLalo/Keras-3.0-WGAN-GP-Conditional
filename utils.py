@@ -4,10 +4,12 @@ File to hold some utility functions not directly related to the WGAN_GP model
 
 
 import os
-import time
+from pathlib import Path
 import argparse
 import psutil
 import subprocess
+from datetime import datetime
+import pytz
 
 
 def parse_arguments():
@@ -63,56 +65,30 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def print_fresh_start_warning_message():
+def get_last_checkpoint_dir_and_file(all_model_training_output_dir: Path):
     """
-    function to print out a big warning message that takes around ~10 seconds giving the user a small amount of time to cancel the operation if they
-    want to.
+    function to find the last model training run started and return the path to the model and last checkpoint directories so that the model can be 
+    reloaded to continue training, or used for inference.
     
     Parameters:
-        None
+        all_model_training_output_dir (Path): the path to the directory containing all the model training output directories
     
     Returns:
-        None
+        last_model_training_run_dir (Path): the path to the last model training directory created
+        last_checkpoint_dir_path (Path): the path to the last checkpoint directory in the last model training started
     """
-    print(f"\n\n{'#'*160}\n")
-    # iterate up to 25 making a bigger warning message each time
-    count_up_list = list(range(1, 30))
-    # iterate down to 1 so we can print out a timer
-    count_down_list = count_up_list[::-1]
-    for count_up, count_down in zip(count_up_list, count_down_list):
-        sleep_time = round(count_up * 0.03, 2)
-        print(
-            f"{'#' * (count_up + 1)} | {count_down:>2} | "
-            f"FRESH START. TRAINING STARTING OVER, model_training_output WILL BE DELETED!"
-            f" | {count_down:>2} | {'#' * (count_up + 1)}".center(160)
-            )
-        time.sleep(sleep_time)
-    print(f"\n{'#'*160}\n\n")
-    time.sleep(0.5)  # give a little bit of extra time
-    return
-
-
-def get_last_checkpoint_dir_and_file(model_checkpoints_dir):
-    """
-    function to get the path for the last model checkpoint dir and last model checkpoint directory and file
+    # sort the directories in the model_training_output directory and get the path to the last model training started
+    sorted_model_training_dirs = sorted(os.listdir(all_model_training_output_dir))
+    last_model_created = sorted_model_training_dirs[-1]
+    last_model_training_run_dir = all_model_training_output_dir.joinpath(last_model_created)
     
-    Parameters:
-        model_checkpoints_dir (Path): the path to the model_checkpoints directory
-    
-    Returns:
-        last_checkpoint_dir_path (Path): the path to the last checkpoint directory
-        last_model_checkpoint_path (Path): the path to the last model checkpoint file
-    """
-    sorted_checkpoint_dirs = sorted(os.listdir(model_checkpoints_dir))
+    # get the path to the checkpoint directories in the last model training started, sort them, and get the last checkpoint directory
+    checkpoint_dir = last_model_training_run_dir.joinpath("model_checkpoints")
+    sorted_checkpoint_dirs = sorted(os.listdir(checkpoint_dir))
     last_checkpoint_dir = sorted_checkpoint_dirs[-1]
+    last_checkpoint_dir_path = checkpoint_dir.joinpath(last_checkpoint_dir)
     
-    # list the files in the last checkpoint directory
-    last_checkpoint_dir_path = model_checkpoints_dir.joinpath(last_checkpoint_dir)
-    last_checkpoint_files = os.listdir(last_checkpoint_dir_path)
-    # get the filename that ends with .keras
-    last_model_checkpoint_filename = [file for file in last_checkpoint_files if file.endswith(".keras")][0]
-    last_model_checkpoint_path = last_checkpoint_dir_path.joinpath(last_model_checkpoint_filename)
-    return last_checkpoint_dir_path, last_model_checkpoint_path
+    return last_model_training_run_dir, last_checkpoint_dir_path
 
 
 def get_memory_usage():
@@ -157,3 +133,37 @@ def get_gpu_memory_usage():
         memory_gb = 9999  # numbers that are obviously not memory usage to indicate an error
     
     return memory_mb, memory_gb
+
+
+def get_timestamp():
+    """
+    function to get a formatted timestamp in the US Central Time Zone for logging purposes that can also be used as a unique identifier
+    """
+    # Get the current time in the US Central Time Zone with custom formatting
+    central_time = datetime.now(pytz.timezone('US/Central'))
+    formatted_time = central_time.strftime("%Y-%m-%d__%H:%M:%S")
+    return formatted_time
+
+
+def get_readable_time_string(seconds_input: float):
+    """
+    function to convert seconds (float) to a readable time string in the format HHH:MM:SS.ss
+    
+    """
+    # convert to a readable format (HH:MM:SS.ss)
+    hours = int(seconds_input // 3600)
+    minutes = int((seconds_input % 3600) // 60)
+    seconds = seconds_input % 60
+    readable_time_string = f"{hours:03}:{minutes:02}:{seconds:06.2f}"
+    return readable_time_string
+
+
+if __name__ == "__main__":
+    WGAN_GP_MNIST_MODELS_DIR = Path("wgan_gp_mnist_training_runs")
+    last_model_training_run_dir, last_checkpoint_dir_path = get_last_checkpoint_dir_and_file(WGAN_GP_MNIST_MODELS_DIR)
+    print(f"Last checkpoint directory: {last_checkpoint_dir_path}")
+    # find the .keras file in the last checkpoint directory
+    last_checkpoint_dir_files = os.listdir(last_checkpoint_dir_path)
+    model_save_file = [file for file in last_checkpoint_dir_files if file.endswith(".keras")][0]
+    model_save_file_path = last_checkpoint_dir_path.joinpath(model_save_file)
+    print(f"Model save file path: {model_save_file_path}")

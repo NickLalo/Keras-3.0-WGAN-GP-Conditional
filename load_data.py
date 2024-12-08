@@ -57,10 +57,12 @@ def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batc
     train_images = np.expand_dims(train_images, axis=-1)
     
     # Create a tf.data.Dataset object for the training data
-    buffer_size = min(len(train_images), 1024)  # ensure that the buffer size is not greater than the dataset size when running with a testing subset
+    buffer_size = len(train_images)  # ensures the dataset is fully shuffled
+    # use this line below if memory becomes an issue. This could help
+    # buffer_size = min(len(train_images), 2048)  # ensure that the buffer size is not greater than the dataset size when running with a testing subset
     train_dataset = tf.data.Dataset.from_tensor_slices((train_images, train_labels))  # works seamlessly with numpy arrays
     # Make an infinite dataset
-    train_dataset = train_dataset.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)
+    train_dataset = train_dataset.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.AUTOTUNE)
     # TODO: swap out this line below for an infinite dataset
     # train_dataset = train_dataset.repeat().shuffle(buffer_size).batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)
     

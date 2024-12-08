@@ -14,4 +14,4 @@ training_logs.txt
 data/
 loss_plots/
 wgan_gp_model/
-model_training_output/
+wgan_gp_mnist_training_runs/

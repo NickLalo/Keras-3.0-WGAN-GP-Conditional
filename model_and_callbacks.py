@@ -7,7 +7,9 @@ https://keras.io/examples/generative/wgan_gp/
 
 
 import os
+from datetime import datetime
 import shutil
+import pytz
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -20,7 +22,7 @@ matplotlib.use("Agg")  # set to use the "Agg" to avoid tkinter error
 from PIL import Image
 import warnings
 
-from utils import get_memory_usage, get_gpu_memory_usage
+from utils import get_memory_usage, get_gpu_memory_usage, get_timestamp, get_readable_time_string
 
 
 # choose to ignore the specific warning for loading optimizers as our WGAN_GP class handles this in the compile_from_config method. This method 
@@ -153,17 +155,22 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
     # Define the model with both inputs
     critic_model = keras.models.Model([img_input, class_input], x, name="critic")
     
+    # get the filepath to the model_architecture_and_summary directory
+    model_architecture_and_summary_dir = model_training_output_dir.joinpath("model_architecture_and_summary")
+    # create the directory if it doesn't exist
+    os.makedirs(model_architecture_and_summary_dir, exist_ok=True)
+    
     # save a copy of the model summary to a text file
-    model_summary_path = model_training_output_dir.joinpath("critic_model_summary.txt")
+    model_summary_path = model_architecture_and_summary_dir.joinpath("critic_model_summary.txt")
     with open(model_summary_path, "w") as file:
         critic_model.summary(line_length=150, print_fn=lambda x: file.write(x + "\n"))
     
     # visualize the model architecture with keras.utils.plot_model
-    model_visualization_path = model_training_output_dir.joinpath("critic_model_architecture.png")
+    model_visualization_path = model_architecture_and_summary_dir.joinpath("critic_model_architecture.png")
     keras.utils.plot_model(critic_model, to_file=model_visualization_path, show_shapes=True, show_layer_names=True)
     
     # save a copy of the model for visualization with netron.app
-    model_netron_path = model_training_output_dir.joinpath("critic_model_for_netron_app.keras")
+    model_netron_path = model_architecture_and_summary_dir.joinpath("critic_model_for_netron_app.keras")
     critic_model.save(model_netron_path)
     
     print(f"\nDone initializing the critic model.")
@@ -249,7 +256,7 @@ def get_generator_model(noise_dim_shape: int, num_classes: int, model_training_o
     x = layers.Reshape((4, 4, 256))(x)
     x = upsample_block(
         x,
-        128,
+        256,
         layers.LeakyReLU(0.2),
         strides=(1, 1),
         use_bias=False,
@@ -259,7 +266,7 @@ def get_generator_model(noise_dim_shape: int, num_classes: int, model_training_o
     )
     x = upsample_block(
         x,
-        64,
+        128,
         layers.LeakyReLU(0.2),
         strides=(1, 1),
         use_bias=False,
@@ -282,17 +289,22 @@ def get_generator_model(noise_dim_shape: int, num_classes: int, model_training_o
     # Define the model with both inputs
     generator_model = keras.models.Model([noise_input, class_input], x, name="generator")
     
+    # get the filepath to the model_architecture_and_summary directory
+    model_architecture_and_summary_dir = model_training_output_dir.joinpath("model_architecture_and_summary")
+    # create the directory if it doesn't exist
+    os.makedirs(model_architecture_and_summary_dir, exist_ok=True)
+    
     # save a copy of the model summary to a text file
-    model_summary_path = model_training_output_dir.joinpath("generator_model_summary.txt")
+    model_summary_path = model_architecture_and_summary_dir.joinpath("generator_model_summary.txt")
     with open(model_summary_path, "w") as file:
         generator_model.summary(line_length=150, print_fn=lambda x: file.write(x + "\n"))
     
     # visualize the model architecture with keras.utils.plot_model
-    model_visualization_path = model_training_output_dir.joinpath("generator_model_architecture.png")
+    model_visualization_path = model_architecture_and_summary_dir.joinpath("generator_model_architecture.png")
     keras.utils.plot_model(generator_model, to_file=model_visualization_path, show_shapes=True, show_layer_names=True)
     
     # save a copy of the model for visualization with netron.app
-    model_netron_path = model_training_output_dir.joinpath("generator_model_for_netron_app.keras")
+    model_netron_path = model_architecture_and_summary_dir.joinpath("generator_model_for_netron_app.keras")
     generator_model.save(model_netron_path)
     
     print(f"\nDone initializing the generator model.")
@@ -313,6 +325,9 @@ class WGAN_GP(keras.Model):
         generator,
         num_classes,
         latent_dim,
+        learning_rate,
+        learning_rate_warmup_epochs,
+        learning_rate_decay,
         critic_extra_steps=5,
         critic_input_shape=None,
         gp_weight=10.0,
@@ -323,6 +338,13 @@ class WGAN_GP(keras.Model):
         self.generator = generator
         self.num_classes = num_classes
         self.latent_dim = latent_dim
+        # REVIEW: learning rate value that is updated by the learning rate scheduler. Used to set the initial values of the optimizers, but I'm not 
+        # sure if keeping track of it here is actually necessary because we save/load the optimizers directly so the value should remain the same.
+        self.learning_rate = learning_rate
+        # REVIEW: learning rate warmup epochs value that is used by the learning rate scheduler. This is the number of epochs the model trains for
+        #         before updating the learning rate.
+        self.learning_rate_warmup_epochs = learning_rate_warmup_epochs
+        self.learning_rate_decay = learning_rate_decay
         # in a WGAN-GP, the critic trains for a number of steps and then generator trains for one step
         self.num_critic_steps = critic_extra_steps
         self.critic_input_shape = critic_input_shape
@@ -464,6 +486,7 @@ class WGAN_GP(keras.Model):
     
     def get_config(self):
         """
+        Custom saving step 1: get_config()
         More info on custom loading and saving:
         https://keras.io/guides/serialization_and_saving/
         Runs as part of the saving process to serialize the model when calling model.save()
@@ -472,6 +495,7 @@ class WGAN_GP(keras.Model):
         # get the default configuration for the model
         base_config = super().get_config()
         
+        # TODO: instead of saving the critic and generator models to the custom config, instead save them as separate files here.
         # get extra configurations for custom model attributes (not Python objects like ints, strings, etc.)
         custom_config = {
             "critic": keras.saving.serialize_keras_object(self.critic),
@@ -480,6 +504,9 @@ class WGAN_GP(keras.Model):
             "latent_dim": self.latent_dim,
             "critic_extra_steps": self.num_critic_steps,
             "gp_weight": self.gp_weight,
+            "learning_rate": self.learning_rate,
+            "learning_rate_warmup_epochs": self.learning_rate_warmup_epochs,
+            "learning_rate_decay": self.learning_rate_decay,
         }
         
         # combine the two configurations
@@ -488,6 +515,7 @@ class WGAN_GP(keras.Model):
     
     def get_compile_config(self):
         """
+        Custom saving step 2: get_compile_config()
         More info on custom loading and saving:
         https://keras.io/guides/customizing_saving_and_serialization/#getcompileconfig-and-compilefromconfig
         Runs as part of the saving process to serialize the compiled parameters when calling model.save()
@@ -499,24 +527,29 @@ class WGAN_GP(keras.Model):
             "critic_optimizer_state": [v.numpy() for v in self.critic_optimizer.variables],
             "gen_optimizer": self.gen_optimizer.get_config(),
             "gen_optimizer_state": [v.numpy() for v in self.gen_optimizer.variables],
-            "critic_loss_fn": keras.saving.serialize_keras_object(self.critic_loss_fn),
-            "gen_loss_fn": keras.saving.serialize_keras_object(self.gen_loss_fn),
         }
         return config
     
     @classmethod
     def from_config(cls, config, custom_objects=None):
         """
+        Custom loading step 1: from_config()
         More info on custom loading and saving:
         https://keras.io/guides/serialization_and_saving/
         Runs as part of the loading process to deserialize the model when calling keras.models.load_model()
         Runs first to deserialize the model configuration
         """
+        # TODO: instead of loading the critic and generator models from the config, load them from separate files here.
+        #       but, I wonder how I will get the paths to the files to load them...
+        
         # get the critic and generator models from the config
         critic = keras.saving.deserialize_keras_object(config.pop("critic"), custom_objects=custom_objects)
         generator = keras.saving.deserialize_keras_object(config.pop("generator"), custom_objects=custom_objects)
         num_classes = config.pop("num_classes")
         latent_dim = config.pop("latent_dim")
+        learning_rate = config.pop("learning_rate")
+        learning_rate_warmup_epochs = config.pop("learning_rate_warmup_epochs")
+        learning_rate_decay = config.pop("learning_rate_decay")
         critic_extra_steps = config.pop("critic_extra_steps")
         gp_weight = config.pop("gp_weight")
         
@@ -525,13 +558,19 @@ class WGAN_GP(keras.Model):
             critic=critic, 
             generator=generator,
             num_classes=num_classes,
-            latent_dim=latent_dim, 
+            latent_dim=latent_dim,
+            learning_rate=learning_rate,
+            learning_rate_warmup_epochs=learning_rate_warmup_epochs,
+            learning_rate_decay=learning_rate_decay,
             critic_extra_steps=critic_extra_steps, 
                     gp_weight=gp_weight)
-        return model
+        # REVIEW: the line above model = cls() is where our code is erroring?
+        # 'learning_rate', 'learning_rate_warmup_epochs', and 'learning_rate_decay' are not in the config and need to be
+        return model # REVIEW: the line above model = cls() is where our code is erroring?
     
     def compile_from_config(self, config):
         """
+        Custom loading step 2: compile_from_config()
         More info on custom loading and saving:
         https://keras.io/guides/customizing_saving_and_serialization/#getcompileconfig-and-compilefromconfig
         Runs as part of the loading process to deserialize the compiled parameters when calling keras.models.load_model()
@@ -547,16 +586,11 @@ class WGAN_GP(keras.Model):
         self.gen_optimizer_state = config["gen_optimizer_state"]
         for var, val in zip(self.gen_optimizer.variables, self.gen_optimizer_state):
             var.assign(val)
-            
-        self.critic_loss_fn = keras.saving.deserialize_keras_object(config["critic_loss_fn"])
-        self.gen_loss_fn = keras.saving.deserialize_keras_object(config["gen_loss_fn"])
         
         # call the compile method to set the optimizer and loss functions
         self.compile(
             critic_optimizer=self.critic_optimizer, 
-            gen_optimizer=self.gen_optimizer, 
-            critic_loss_fn=self.critic_loss_fn, 
-            gen_loss_fn=self.gen_loss_fn
+            gen_optimizer=self.gen_optimizer,
         )
         return
 
@@ -619,6 +653,14 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.this_epoch_checkpoint_dir = None  # the path to the current model checkpoint (will be set/updated in on_epoch_end)
         self.num_classes = num_classes
         
+        # parameters for logging the duration of model training and metric handling
+        self.epoch_start_time = None
+        self.epoch_train_duration = None
+        self.metric_calc_start_time = None
+        # placeholder for the duration of logging the metrics because this is actually logging the duration of the last's epoch's metric logging
+        # duration, but it's close enough for our purposes.
+        self.metric_calc_duration = datetime.now() - datetime.now()
+        
         # parameters for generating validation samples
         self.num_img = num_img
         self.latent_dim = latent_dim
@@ -638,12 +680,31 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             # get the path to the loss_metrics.csv file
             loss_metrics_path = last_checkpoint_dir_path.joinpath("loss_metrics.csv")
             # load the csv to a dataframe
-            self.loss_metrics_dataframe = pd.read_csv(loss_metrics_path)
+            self.metrics_dataframe = pd.read_csv(loss_metrics_path)
             # remember that the model was loaded for logging loss metrics at the end of the next epoch
             self.model_recently_loaded = True
         else:  # create a new dataframe for tracking loss metrics for a fresh start
-            self.loss_metrics_dataframe = pd.DataFrame()  # empty dataframe placeholder that will be overwritten in log_loss_to_dataframe
+            self.metrics_dataframe = pd.DataFrame()  # empty dataframe placeholder that will be overwritten in log_loss_to_dataframe
             self.model_recently_loaded = False
+        
+        # if it does not exist in the model_training_output_dir, create a _NOTES.txt file for writing notes about the model training run
+        notes_file_path = model_training_output_dir.joinpath("_NOTES.txt")
+        if not os.path.exists(notes_file_path):
+            with open(notes_file_path, "w") as file:
+                file.write("A place to write notes about this model training run.\n")
+        return
+    
+    def on_epoch_begin(self, epoch, logs=None):
+        """
+        Called at the start of each epoch during training.
+        Parameters:
+            epoch (int): The current epoch number.
+            logs (dict, optional): Dictionary of logs containing loss metrics.
+        Returns:
+            None
+        """
+        # get the start time of the epoch
+        self.epoch_start_time = datetime.now()
         return
     
     def on_epoch_end(self, epoch, logs=None):
@@ -662,29 +723,47 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         Returns:
             None
         """
+        # get the duration of the time spent training this epoch
+        self.epoch_train_duration = datetime.now() - self.epoch_start_time
+        # start the timer for calculating the duration of logging metrics
+        self.metric_calc_start_time = datetime.now()
+        
+        # get the current epoch number for logging metrics
+        self.update_current_epoch()
+        
         # Set the current epoch checkpoint directory
         self.set_this_epoch_checkpoint_dir()
         
-        # Log the loss metrics to the DataFrame
-        self.log_loss_to_dataframe(logs)
+        # Log the data about training to the DataFrame
+        self.log_data_to_dataframe(logs)
         
-        # Plot individual loss metrics
-        self.create_loss_plots()
+        # Plot tracked metrics
+        self.plot_training_metrics()
         
-        epoch = len(self.loss_metrics_dataframe) + 1
-        if epoch % 10:
-            # REVIEW: put this back after testing code
-            # # save a copy of the model to the current epoch checkpoint directory
-            # model_save_path = self.this_epoch_checkpoint_dir.joinpath("model.keras")
-            # self.model.save(model_save_path)
-            
-            # REVIEW: put this back after testing code
-            # # Generate validation samples
-            self.generate_validation_samples()
+        # update the learning rates of the optimizers if past the warmup period
+        self.learning_rate_scheduler()
+        
+        # Save a copy of the model to the current epoch checkpoint directory
+        # NOTE: this could be changed to every X number of epochs, but then the model loading code would need to be updated as well.
+        self.save_model_checkpoint()
+        
+        # Generate validation samples
+        self.generate_validation_samples()
+        
+        # every X number of epochs, generate a GIF of all the saved images
+        if self.current_epoch % self.gif_creation_frequency == 0 and epoch > 0:
+            self.generate_gif()
+        
+        # Calculate the duration of logging the metrics (will be logged in the next epoch log_data_to_dataframe call)
+        self.metric_calc_duration = datetime.now() - self.metric_calc_start_time
+        
+        # plot train time and metrics calculations and estimate the time to train for a number of epochs. Even though the metric calc time
+        # doesn't include this time, it's tracked for the operations that take the most time.
+        self.plot_epoch_duration_and_estimate_train_time()
         return
     
     def on_train_end(self, logs=None):
-        epoch = len(self.loss_metrics_dataframe)
+        epoch = len(self.metrics_dataframe)
         # skip generating a gif if training ends on a multiple of the frequency to create a gif because it was already generated in the 
         # generate_validation_samples method at the end of the last epoch.
         if epoch % self.gif_creation_frequency != 0:
@@ -692,10 +771,15 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             self.generate_gif()
         return
     
+    def update_current_epoch(self):
+        # get the current epoch number for logging metrics. +1 because we are saying: "These are metrics at the end of one epoch" for the first epoch
+        # and we haven't yet logged metrics for the current epoch so the dataframe has one less row than the current epoch number at this point.
+        self.current_epoch = len(self.metrics_dataframe) + 1
+        return
+    
     def set_this_epoch_checkpoint_dir(self):
         # create a new checkpoint directory for logging info at the end of this epoch
-        epoch = len(self.loss_metrics_dataframe) + 1
-        self.this_epoch_checkpoint_dir = self.model_checkpoints_dir.joinpath(f"epoch_{epoch:04d}")
+        self.this_epoch_checkpoint_dir = self.model_checkpoints_dir.joinpath(f"epoch_{self.current_epoch:04d}")
         # error out if this directory already exists
         if os.path.exists(self.this_epoch_checkpoint_dir):
             error_string = (
@@ -706,7 +790,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         os.makedirs(self.this_epoch_checkpoint_dir, exist_ok=True)
         return
     
-    def log_loss_to_dataframe(self, logs):
+    def log_data_to_dataframe(self, logs):
         """
         Logs the loss metrics to a DataFrame and saves it to a CSV file.
         This method extracts the critic and generator loss values from the provided logs dictionary,
@@ -727,66 +811,77 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         critic_loss_fake = float(logs["critic_loss_fake"])
         gradient_penalty = float(logs["gradient_penalty"])
         gen_loss = float(logs["gen_loss"])
-        # start epoch count from 1 as we are saying: "These are metrics at the end of one epoch" for the first epoch
-        epoch = len(self.loss_metrics_dataframe) + 1
         
         # get the current memory usage in MB and GB
         mem_usage_mb, mem_usage_gb = get_memory_usage()
         # get the current GPU memory usage in MB and GB
         gpu_mem_usage_mb, gpu_mem_usage_gb = get_gpu_memory_usage()
         
+        # get the critic learning rate
+        critic_learning_rate = self.model.critic_optimizer.learning_rate.numpy()
+        generator_learning_rate = self.model.gen_optimizer.learning_rate.numpy()
+        
+        # Get the current time in the US Central Time Zone
+        formatted_timestamp = get_timestamp()
+        
         # create a new DataFrame row with the current epoch data
         new_row = pd.DataFrame([{
-            "epoch": epoch,
+            "epoch": self.current_epoch,
             "critic_loss": critic_loss,
             "critic_loss_real": critic_loss_real,
             "critic_loss_fake": critic_loss_fake,
             "gradient_penalty": gradient_penalty,
             "gen_loss": gen_loss,
             # calculate the number of samples trained on at the end of this epoch
-            "samples_trained_on": epoch * self.samples_per_epoch,
+            "samples_trained_on": self.current_epoch * self.samples_per_epoch,
             "model_loaded": self.model_recently_loaded,
             "memory_usage_gb": mem_usage_gb,
-            "gpu_memory_usage_gb": gpu_mem_usage_gb
+            "gpu_memory_usage_gb": gpu_mem_usage_gb,
+            "critic_learning_rate": critic_learning_rate,
+            "generator_learning_rate": generator_learning_rate,
+            "timestamp_CST": formatted_timestamp,
+            "epoch_train_time": self.epoch_train_duration.total_seconds(),
+            "metric_calc_time": 0.0,  # placeholder value that will be replaced in plot_epoch_duration_and_estimate_train_time
+            "total_iteration_time": 0.0,  # placeholder value that will be replaced in plot_epoch_duration_and_estimate_train_time
         }])
         
         # if the model was loaded, set the model_loaded column to False for the next epoch
         self.model_recently_loaded = False  # we only want to mark the first epoch after loading
         
-        if epoch == 1:
-            # if this is the first epoch, set the loss_metrics_dataframe to the new row
-            self.loss_metrics_dataframe = new_row
+        if self.current_epoch == 1:
+            # if this is the first epoch, set the metrics_dataframe to the new row
+            self.metrics_dataframe = new_row
         else:
             # concatenate the new row to the existing loss dataframe
-            self.loss_metrics_dataframe = pd.concat([self.loss_metrics_dataframe, new_row], ignore_index=True)
+            self.metrics_dataframe = pd.concat([self.metrics_dataframe, new_row], ignore_index=True)
         
-        # Save the losses dataframe to a CSV file
-        csv_save_path = self.this_epoch_checkpoint_dir.joinpath("loss_metrics.csv")
-        self.loss_metrics_dataframe.to_csv(csv_save_path, index=False)
+        # dataframe is saved to a CSV file at in plot_epoch_duration_and_estimate_train_time
         return
     
-    def create_loss_plots(self):
+    def plot_training_metrics(self):
         """
         Generates and saves individual and combined loss plots for the training process with a secondary x-axis showing
         the number of samples trained on.
         """
         # Define list of individual loss columns to plot
-        loss_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gradient_penalty", "gen_loss"]
+        plot_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gen_loss", "gradient_penalty"]
+        plot_line_colors = ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD"]
         
         # Identify locations where model was loaded
-        model_load_indices = self.loss_metrics_dataframe.loc[self.loss_metrics_dataframe['model_loaded'], 'epoch']
+        model_load_indices = self.metrics_dataframe.loc[self.metrics_dataframe['model_loaded'], 'epoch']
         
         # get the number of samples trained and epochs for the x-axis
-        samples_trained = self.loss_metrics_dataframe['samples_trained_on']
-        epochs = self.loss_metrics_dataframe['epoch']
+        samples_trained = self.metrics_dataframe['samples_trained_on']
+        epochs = self.metrics_dataframe['epoch']
         
         ################################ Loop through each loss metric to create individual plots ###############################
-        for col in loss_columns:
+        for color_index, col in enumerate(plot_columns):
             # Create the plot
             fig, ax1 = plt.subplots(figsize=(10, 6))
             
             # Plot the loss metric
-            ax1.plot(epochs, self.loss_metrics_dataframe[col], label=col.replace("_", " ").title(), zorder=1)
+            line_color = plot_line_colors[color_index] # get the color for the current loss metric
+            ax1.plot(epochs, self.metrics_dataframe[col], label=col.replace("_", " ").title(), zorder=1, color=line_color)
             
             # Add vertical lines for model loading events with a single label for legend
             for i, model_load_epoch in enumerate(model_load_indices):
@@ -811,7 +906,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             plt.title(f"{col.replace('_', ' ').title()} vs. Epoch", fontsize=18, pad=10)
             plt.tight_layout()
             
-            # move the word "loss" to the front of the filename for better sorting
+            # move the word "loss" to the front of the filename for better sorting for the loss plots
             col_for_filename = col.replace("_loss", "")
             col_for_filename = f"loss_{col_for_filename}"
             
@@ -823,12 +918,13 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             plt.clf()
         
         ################################ Combined plot for specific losses ###############################
-        combined_loss_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gen_loss"]
+        combined_loss_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gen_loss", "gradient_penalty"]
         fig, ax1 = plt.subplots(figsize=(10, 6))
         
         # Plot the loss metrics
-        for col in combined_loss_columns:
-            ax1.plot(epochs, self.loss_metrics_dataframe[col], label=col.replace("_", " ").title(), zorder=1)
+        for color_index, col in enumerate(combined_loss_columns):
+            line_color = plot_line_colors[color_index]  # get the color for the current loss metric
+            ax1.plot(epochs, self.metrics_dataframe[col], label=col.replace("_", " ").title(), zorder=1, color=line_color)
         
         # Add vertical lines for model loading events with a single label for legend
         for i, model_load_epoch in enumerate(model_load_indices):
@@ -862,10 +958,65 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         plt.clf()
         print(f"\nCombined loss plot saved to: {combined_plot_main_dir_path}")
         
+        ################################ Stacked plots for critic and generator learning rates ###############################
+        loss_columns = ["critic_loss", "gen_loss"]
+        learning_rates_columns = ["critic_learning_rate", "generator_learning_rate"]
+        plot_line_colors = ["#1F77B4", "#D62728"]
+        
+        for loss_col, lr_col, line_color in zip(loss_columns, learning_rates_columns, plot_line_colors):
+            # Create a learning rate plot with a shared x-axis of the loss
+            fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+            
+            # Plot the loss metric
+            axs[0].plot(epochs, self.metrics_dataframe[loss_col], label=loss_col.replace("_", " ").title(), zorder=1, color=line_color)
+            axs[0].set_ylabel(loss_col.replace("_", " ").title())
+            axs[0].legend()
+            axs[0].grid(True, alpha=0.4)
+            
+            # Plot the learning rate
+            axs[1].plot(epochs, self.metrics_dataframe[lr_col], label=lr_col.replace("_", " ").title(), zorder=1, color=line_color)
+            axs[1].set_ylabel(lr_col.replace("_", " ").title())
+            axs[1].legend()
+            axs[1].grid(True, alpha=0.4)
+            
+            # Add vertical lines for model loading events with a single label for legend
+            for i, model_load_epoch in enumerate(model_load_indices):
+                if i == 0:
+                    line_label = "ckpt loaded"
+                else:
+                    line_label = ""
+                axs[0].axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
+                axs[1].axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
+                # add text to show the number of samples at this checkpoint
+                y_text_position = ((axs[0].get_ylim()[1] - axs[0].get_ylim()[0]) * 0.02) + axs[0].get_ylim()[0]
+                axs[0].text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', 
+                        ha='right', zorder=2)
+                axs[1].text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', 
+                        ha='right', zorder=2)
+            
+            # add text to the plot to show the number of samples trained on at the end of the last epoch
+            plt.text(0.86, 1.028, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
+                        transform=plt.gca().transAxes)
+            
+            plt.suptitle(f"{loss_col.replace('_', ' ').title()} and {lr_col.replace('_', ' ').title()} vs. Epoch", fontsize=18, y=0.96)
+            axs[1].set_xlabel("Epoch")
+            plt.tight_layout()
+            
+            # move "learning_rate" to the front of the filename for better sorting of the plots in the directory
+            filename = lr_col.split("_")[0]  # get the name of the optimizer from the column name
+            filename = f"learning_rate_{filename}"
+            
+            # Save the plot to the current epoch checkpoint directory
+            plot_path = self.this_epoch_checkpoint_dir.joinpath(f"{filename}.png")
+            plt.savefig(plot_path, dpi=200)
+            shutil.copy(plot_path, self.model_training_output_dir.joinpath(f"{filename}.png"))
+            plt.close()
+            plt.clf()
+        
         ############################### create a plot to show memory usage over time ##############################
         fig, ax1 = plt.subplots(figsize=(10, 6))
         # Plot the memory usage in GB
-        ax1.plot(epochs, self.loss_metrics_dataframe["memory_usage_gb"], label="Memory Usage (GB)", zorder=1)
+        ax1.plot(epochs, self.metrics_dataframe["memory_usage_gb"], label="Memory Usage (GB)", zorder=1)
         
         # Add vertical lines for model loading events with a single label for legend
         for i, model_load_epoch in enumerate(model_load_indices):
@@ -890,17 +1041,16 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         plt.title("Memory Usage vs. Epoch")
         plt.tight_layout()
         
-        # Save the memory usage plot to the current epoch checkpoint directory
-        memory_plot_path = self.this_epoch_checkpoint_dir.joinpath("memory_usage.png")
+        # Save the memory usage plot to the model training output directory
+        memory_plot_path = self.model_training_output_dir.joinpath("memory_usage.png")
         plt.savefig(memory_plot_path, dpi=200)
-        shutil.copy(memory_plot_path, self.model_training_output_dir.joinpath("memory_usage.png"))
         plt.close()
         plt.clf()
         
         ############################## create a plot to show GPU memory usage over time ##############################
         fig, ax1 = plt.subplots(figsize=(10, 6))
         # Plot the GPU memory usage in GB
-        ax1.plot(epochs, self.loss_metrics_dataframe["gpu_memory_usage_gb"], label="GPU Memory Usage (GB)", zorder=1)
+        ax1.plot(epochs, self.metrics_dataframe["gpu_memory_usage_gb"], label="GPU Memory Usage (GB)", zorder=1)
         
         for i, model_load_epoch in enumerate(model_load_indices):
             if i == 0:
@@ -924,13 +1074,25 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         plt.title("GPU Memory Usage vs. Epoch")
         plt.tight_layout()
         
-        # Save the GPU memory usage plot to the current epoch checkpoint directory
-        gpu_memory_plot_path = self.this_epoch_checkpoint_dir.joinpath("memory_usage_GPU.png")
-        plt.savefig(gpu_memory_plot_path, dpi=200)
-        shutil.copy(gpu_memory_plot_path, self.model_training_output_dir.joinpath("memory_usage_GPU.png"))
+        # Save the GPU memory usage plot to the model training output directory
+        plot_path = self.model_training_output_dir.joinpath("memory_usage_GPU.png")
+        plt.savefig(plot_path, dpi=200)
         plt.close()
         plt.clf()
         
+        return
+    
+    def learning_rate_scheduler(self):
+        # if we have passed the warmup period, start to decay the learning rates
+        if self.current_epoch > self.model.learning_rate_warmup_epochs:
+            self.model.critic_optimizer.learning_rate = self.model.critic_optimizer.learning_rate * self.model.learning_rate_decay
+            self.model.gen_optimizer.learning_rate = self.model.gen_optimizer.learning_rate * self.model.learning_rate_decay
+        return
+    
+    def save_model_checkpoint(self):
+        # save a copy of the model to the current epoch checkpoint directory
+        model_save_path = self.this_epoch_checkpoint_dir.joinpath("model.keras")
+        self.model.save(model_save_path)
         return
     
     def generate_validation_samples(self):
@@ -970,13 +1132,10 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             axes[row, col].set_title(f'Label: {label} Score: {score:.2f}', fontsize=6)
         
         # Add a title to the plot with the epoch and number of samples trained
-        epoch = len(self.loss_metrics_dataframe)
-        samples_trained = self.loss_metrics_dataframe['samples_trained_on'].iloc[-1]
-        fig.suptitle(f"Validation Samples - Epoch {epoch}, Samples Trained: {samples_trained:,}", fontsize=12)
+        samples_trained = self.metrics_dataframe['samples_trained_on'].iloc[-1]
+        fig.suptitle(f"Validation Samples - Epoch {self.current_epoch}, Samples Trained: {samples_trained:,}", fontsize=12)
         
         plt.tight_layout()
-        # get epoch from the number of rows in the loss dataframe
-        epoch = len(self.loss_metrics_dataframe)
         
         # Save the grid of images to the current epoch checkpoint directory
         fig_save_path = self.this_epoch_checkpoint_dir.joinpath(f"validation_samples.png")
@@ -988,11 +1147,6 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # Clear the current figure and close the plot to avoid memory leaks
         plt.clf()
         plt.close()
-        
-        # TODO: remove this later
-        # every X number of epochs, generate a GIF of all the saved images
-        # if epoch % self.gif_creation_frequency == 0 and epoch > 0:
-        #     self.generate_gif()
         return
     
     def generate_gif(self):
@@ -1034,4 +1188,114 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         shutil.copy(gif_save_path, gif_copy_path)
         
         print(f"GIF saved to {gif_save_path}")
+        return
+    
+    def plot_epoch_duration_and_estimate_train_time(self):
+        """
+        method to estimate the time to train for a number of epochs based on the average time spent training
+        """
+        # calculate the total time spent on this epoch (training and metric logging)
+        total_iteration_time = self.epoch_train_duration.total_seconds() + self.metric_calc_duration.total_seconds()
+        
+        # update the last row of the metrics dataframe with the correct values for the time spent training and logging metrics
+        self.metrics_dataframe.iloc[-1, self.metrics_dataframe.columns.get_loc("metric_calc_time")] = self.metric_calc_duration.total_seconds()
+        self.metrics_dataframe.iloc[-1, self.metrics_dataframe.columns.get_loc("total_iteration_time")] = total_iteration_time
+        
+        # Save the metrics dataframe to a CSV file now that we have the time spent logging metrics
+        csv_save_path = self.this_epoch_checkpoint_dir.joinpath("metrics_dataframe.csv")
+        self.metrics_dataframe.to_csv(csv_save_path, index=False)
+        
+        ############################## create plots for training and metric calculation durations ##############################
+        # Identify locations where model was loaded
+        model_load_indices = self.metrics_dataframe.loc[self.metrics_dataframe['model_loaded'], 'epoch']
+        
+        # get the number of samples trained and epochs for the x-axis
+        samples_trained = self.metrics_dataframe['samples_trained_on']
+        epochs = self.metrics_dataframe['epoch']
+        
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        # Plot the time metric starting after the first epoch
+        ax1.bar(epochs[:], self.metrics_dataframe["epoch_train_time"], label="epoch_train_time".replace("_", " ").title(), zorder=1, 
+                color='#3B9DE3', edgecolor='black')
+        ax1.bar(epochs[:], self.metrics_dataframe["metric_calc_time"], label="metric_calc_time".replace("_", " ").title(), zorder=1,
+                color='#AE7E6F', edgecolor='black', bottom=self.metrics_dataframe["epoch_train_time"])
+        
+        for i, model_load_epoch in enumerate(model_load_indices):
+            if i == 0:
+                line_label = "ckpt loaded"
+            else:
+                line_label = ""
+            ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=2)
+            # add text to show the number of samples at this checkpoint
+            y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
+            ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
+                    zorder=2)
+        
+        # add text to the plot to show the number of samples trained on at the end of the last epoch
+        plt.text(0.86, 1.012, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
+                transform=plt.gca().transAxes)
+        
+        ax1.set_xlabel("Epoch")
+        ax1.set_ylabel("Duration (s)")
+        ax1.legend()
+        ax1.grid(True, alpha=0.4)
+        plt.title(f"Time Breakdown Across Epochs")
+        plt.tight_layout()
+        
+        filename = f"time_breakdown_across_epochs.png"
+        plot_path = self.model_training_output_dir.joinpath(filename)
+        print(f"Saving plot to: {plot_path}")
+        plt.savefig(plot_path, dpi=200)
+        plt.close()
+        plt.clf()
+        
+        # if this is the first epoch, skip estimating the time to train to specific epochs because we don't have enough data.
+        if self.current_epoch == 1:
+            return
+        
+        # get the time spent on every epoch and replace the first value with the second value
+        iteration_times = self.metrics_dataframe["total_iteration_time"].copy()  # (time spent training + time spent logging metrics)
+        iteration_times.iloc[0] = iteration_times.iloc[1]
+        
+        # get the average time spent on an epoch
+        avg_iteration_time = iteration_times.mean()
+        stdev_iteration_time = iteration_times.std()
+        # write to a file the time it took to train to a milestone or the estimated time to train to a milestone
+        with open(self.model_training_output_dir.joinpath("_milestones_and_ETAs.txt"), "w") as file:
+            file.write("Epoch Milestones and Estimated Training Times\n")
+            file.write(f"{'='*72}\n")
+            # convert to a readable format (HHH:MM:SS.ss)
+            avg_time = get_readable_time_string(avg_iteration_time)
+            stdev_time = get_readable_time_string(stdev_iteration_time)
+            file.write(f"Average Epoch Duration (HHH:MM:SS.ss): {avg_time}\n")
+            file.write(f"Standard Deviation (HHH:MM:SS.ss): {stdev_time}\n")
+            file.write(f"NOTE: this time includes the time spent training and logging metrics.\n")
+            """
+            NOTE: the average and standard deviations are calculated with the second 
+                epoch's time replacing the first epoch's time to not overstate the 
+                time spent on the first epoch where a long time is spent to setup 
+                the computation graph of the model.
+            """
+            file.write(f"NOTE: the average and standard deviations are calculated with the second\n" \
+                    f"\tepoch's time replacing the first epoch's time to not overstate the\n" \
+                    f"\ttime spent on the first epoch where a long time is spent to setup\n" \
+                    f"\tthe computation graph of the model.\n")
+            file.write(f"{'='*72}\n")
+            epoch_milestones = [5, 10, 20, 40, 50, 60, 80, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 5000, 10000]
+            for milestone in epoch_milestones:
+                # if we have already passed the milestone, calculate the time it took
+                if self.current_epoch > milestone:
+                    # add up the iteration times up to the milestone
+                    total_time_seconds = iteration_times[:milestone].sum()
+                    # convert to a readable format (HHH:MM:SS.ss)
+                    total_time = get_readable_time_string(total_time_seconds)
+                    # write the time to the file
+                    file.write(f"Epoch {milestone: <5} - Time to Train (HHH:MM:SS.ss): {total_time}\n")
+                else:  # we haven't reached that milestone yet
+                    total_time_seconds = avg_iteration_time * milestone
+                    # convert to a readable format (HHH:MM:SS.ss)
+                    total_time = get_readable_time_string(total_time_seconds)
+                    # write the estimated time to the file
+                    file.write(f"Epoch {milestone: <5} - Estimated Time to Train (HHH:MM:SS.ss): {total_time}\n")
+            file.write(f"{'='*72}\n")
         return
