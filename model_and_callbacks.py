@@ -610,7 +610,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         samples_per_epoch (int): Number of samples in the training dataset.
         last_checkpoint_dir_path (str, optional): Path to the last checkpoint directory if the model is being reloaded.
         random_latent_vectors (tf.Tensor): Pre-generated random latent vectors for generating validation samples.
-        loss_metrics_dataframe (pd.DataFrame): DataFrame to track loss metrics.
+        metrics_dataframe (pd.DataFrame): DataFrame to track loss metrics.
         model_recently_loaded (bool): Flag to indicate if the model was recently loaded from a checkpoint.
         gif_creation_frequency (int): Frequency (in epochs) to create a GIF of validation samples.
     Methods:
@@ -675,12 +675,12 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.gif_creation_frequency = 5  # create a GIF every 5 epochs
         self.samples_per_epoch = samples_per_epoch
         
-        # load the loss metrics csv to a dataframe if the last_checkpoint_dir_path is provided (we are reloading the model)
+        # load the training metrics csv to a dataframe if the last_checkpoint_dir_path is provided (we are reloading the model)
         if last_checkpoint_dir_path is not None:
-            # get the path to the loss_metrics.csv file
-            loss_metrics_path = last_checkpoint_dir_path.joinpath("loss_metrics.csv")
+            # get the path to the training_metrics.csv file
+            training_metrics_csv_path = last_checkpoint_dir_path.joinpath("training_metrics.csv")
             # load the csv to a dataframe
-            self.metrics_dataframe = pd.read_csv(loss_metrics_path)
+            self.metrics_dataframe = pd.read_csv(training_metrics_csv_path)
             # remember that the model was loaded for logging loss metrics at the end of the next epoch
             self.model_recently_loaded = True
         else:  # create a new dataframe for tracking loss metrics for a fresh start
@@ -1000,7 +1000,6 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             
             plt.suptitle(f"{loss_col.replace('_', ' ').title()} and {lr_col.replace('_', ' ').title()} vs. Epoch", fontsize=18, y=0.96)
             axs[1].set_xlabel("Epoch")
-            plt.tight_layout()
             
             # move "learning_rate" to the front of the filename for better sorting of the plots in the directory
             filename = lr_col.split("_")[0]  # get the name of the optimizer from the column name
@@ -1202,7 +1201,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.metrics_dataframe.iloc[-1, self.metrics_dataframe.columns.get_loc("total_iteration_time")] = total_iteration_time
         
         # Save the metrics dataframe to a CSV file now that we have the time spent logging metrics
-        csv_save_path = self.this_epoch_checkpoint_dir.joinpath("metrics_dataframe.csv")
+        csv_save_path = self.this_epoch_checkpoint_dir.joinpath("training_metrics.csv")
         self.metrics_dataframe.to_csv(csv_save_path, index=False)
         
         ############################## create plots for training and metric calculation durations ##############################
@@ -1284,7 +1283,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             epoch_milestones = [5, 10, 20, 40, 50, 60, 80, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 5000, 10000]
             for milestone in epoch_milestones:
                 # if we have already passed the milestone, calculate the time it took
-                if self.current_epoch > milestone:
+                if self.current_epoch >= milestone:
                     # add up the iteration times up to the milestone
                     total_time_seconds = iteration_times[:milestone].sum()
                     # convert to a readable format (HHH:MM:SS.ss)
