@@ -38,6 +38,8 @@ def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batc
         subset_size = 1024
         train_images = train_images[:subset_size]
         train_labels = train_labels[:subset_size]
+    elif dataset_subset_percentage > 1.0:
+        raise ValueError(f"Dataset subset percentage ({dataset_subset_percentage}) cannot be greater than 1.0.")
     elif dataset_subset_percentage < 1.0:
         print(f"\nDATASET SUBSET PERCENTAGE: Running with {dataset_subset_percentage}% of the training data.\n")
         train_images = train_images[:int(dataset_subset_percentage * len(train_images))]
@@ -63,8 +65,6 @@ def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batc
     train_dataset = tf.data.Dataset.from_tensor_slices((train_images, train_labels))  # works seamlessly with numpy arrays
     # Make an infinite dataset
     train_dataset = train_dataset.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.AUTOTUNE)
-    # TODO: swap out this line below for an infinite dataset
-    # train_dataset = train_dataset.repeat().shuffle(buffer_size).batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)
     
     # get some info about the dataset
     samples_per_epoch = len(train_images)
@@ -73,7 +73,7 @@ def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batc
     num_classes = len(unique_labels)
     
     if verbose:
-        print(f"\n{'#'*60} DATASET LOADED SUCCESSFULLY {'#'*60}")
+        print(f"\n{'#'*60} DATASET LOADED SUCCESSFULLY {'#'*61}")
         print(f"Number of training samples: {len(train_images)}")
         print(f"Min pixel value in the dataset: {np.min(train_images)}")
         print(f"Max pixel value in the dataset: {np.max(train_images)}")
@@ -82,7 +82,7 @@ def load_mnist_data_for_gan(debug_run=False, dataset_subset_percentage=1.0, batc
         print(f"Shape of a single image: {img_shape}")
         print(f"Unique labels: {unique_labels}")
         print(f"Number of classes: {num_classes}")
-        print(f"{'#'*149}\n")
+        print(f"{'#'*150}\n")
     
     return train_dataset, img_shape, num_classes, samples_per_epoch
 

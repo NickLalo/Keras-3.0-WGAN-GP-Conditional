@@ -338,13 +338,14 @@ class WGAN_GP(keras.Model):
         self.generator = generator
         self.num_classes = num_classes
         self.latent_dim = latent_dim
-        # REVIEW: learning rate value that is updated by the learning rate scheduler. Used to set the initial values of the optimizers, but I'm not 
-        # sure if keeping track of it here is actually necessary because we save/load the optimizers directly so the value should remain the same.
+        
+        # learning rate parameters used by the learning_rate_scheduler method in the Training_Monitor callback
+        # the learning rate for the critic and generator optimizers
         self.learning_rate = learning_rate
-        # REVIEW: learning rate warmup epochs value that is used by the learning rate scheduler. This is the number of epochs the model trains for
-        #         before updating the learning rate.
+        # learning rate warmup epochs value is the number of epochs the model trains for before the learning rate decay begins
         self.learning_rate_warmup_epochs = learning_rate_warmup_epochs
         self.learning_rate_decay = learning_rate_decay
+        
         # in a WGAN-GP, the critic trains for a number of steps and then generator trains for one step
         self.num_critic_steps = critic_extra_steps
         self.critic_input_shape = critic_input_shape
@@ -353,7 +354,7 @@ class WGAN_GP(keras.Model):
         # set dummy value for self.optimizer avoid errors at the end of .fit() call
         self.optimizer = None
         
-        # build the model
+        # build the model to avoid errors when loading the model
         self.build()
         return
     
@@ -364,7 +365,8 @@ class WGAN_GP(keras.Model):
         return
     
     def gradient_penalty(self, batch_size, real_images, fake_images, image_one_hot_labels):
-        alpha = tf.random.normal([batch_size, 1, 1, 1], 0.0, 1.0)
+        alpha = tf.random.normal([batch_size, 1, 1, 1], 0.0, 1.0, dtype="float16")
+        real_images = tf.cast(real_images, dtype="float16")  # cast to float16 for mixed precision training
         diff = fake_images - real_images
         interpolated = real_images + alpha * diff
         
@@ -495,8 +497,7 @@ class WGAN_GP(keras.Model):
         # get the default configuration for the model
         base_config = super().get_config()
         
-        # TODO: instead of saving the critic and generator models to the custom config, instead save them as separate files here.
-        # get extra configurations for custom model attributes (not Python objects like ints, strings, etc.)
+        # get the custom configuration for the model
         custom_config = {
             "critic": keras.saving.serialize_keras_object(self.critic),
             "generator": keras.saving.serialize_keras_object(self.generator),
@@ -539,12 +540,11 @@ class WGAN_GP(keras.Model):
         Runs as part of the loading process to deserialize the model when calling keras.models.load_model()
         Runs first to deserialize the model configuration
         """
-        # TODO: instead of loading the critic and generator models from the config, load them from separate files here.
-        #       but, I wonder how I will get the paths to the files to load them...
-        
         # get the critic and generator models from the config
         critic = keras.saving.deserialize_keras_object(config.pop("critic"), custom_objects=custom_objects)
         generator = keras.saving.deserialize_keras_object(config.pop("generator"), custom_objects=custom_objects)
+        
+        # get the extra configurations for custom model attributes
         num_classes = config.pop("num_classes")
         latent_dim = config.pop("latent_dim")
         learning_rate = config.pop("learning_rate")
@@ -564,9 +564,7 @@ class WGAN_GP(keras.Model):
             learning_rate_decay=learning_rate_decay,
             critic_extra_steps=critic_extra_steps, 
                     gp_weight=gp_weight)
-        # REVIEW: the line above model = cls() is where our code is erroring?
-        # 'learning_rate', 'learning_rate_warmup_epochs', and 'learning_rate_decay' are not in the config and need to be
-        return model # REVIEW: the line above model = cls() is where our code is erroring?
+        return model
     
     def compile_from_config(self, config):
         """
@@ -629,21 +627,19 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         generate_gif():
             Creates a GIF of the validation images generated at regular intervals.
     """
-    def __init__(self, 
-                model_training_output_dir, 
-                model_checkpoints_dir, 
+    def __init__(self,
+                model_training_output_dir,
+                model_checkpoints_dir,
                 num_classes,
-                num_img, 
-                latent_dim, 
-                grid_size, 
+                latent_dim,
                 samples_per_epoch=0,
+                gif_and_model_save_frequency=5,
                 last_checkpoint_dir_path=None
                 ):
         """
         Parameters:
             model_training_output_dir: str, the main directory to save outputs from the model training
             model_checkpoints_dir: str, the directory to save the model checkpoints and info at each epoch
-            num_img: int, the number of images to generate at the end of each epoch
             latent_dim: int, the latent dimension of the generator
             grid_size: tuple, the size of the grid for the generated images
             samples_per_epoch: int, the number of samples in the training dataset
@@ -662,9 +658,9 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.metric_calc_duration = datetime.now() - datetime.now()
         
         # parameters for generating validation samples
-        self.num_img = num_img
+        self.num_img = 20
         self.latent_dim = latent_dim
-        self.grid_size = grid_size  # Grid size as a tuple (rows, cols)
+        self.grid_size = (4, 5)  # Grid size as a tuple (rows, cols)
         
         # deterministically generate the random latent vectors for generating validation samples so that the same random latent vectors are used
         # every time the model is reloaded.
@@ -672,7 +668,10 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.random_latent_vectors = generator.normal(shape=(self.num_img, self.latent_dim))
         self.random_labels = generator.uniform(shape=(self.num_img, 1), minval=0, maxval=self.num_classes, dtype=tf.int32)
         
-        self.gif_creation_frequency = 5  # create a GIF every 5 epochs
+        # frequency (in epochs) to create a GIF of validation samples and save the model
+        self.gif_and_model_save_frequency = gif_and_model_save_frequency
+        
+        # counter to track the number of samples the model has been trained on so far (not including the extra steps for the critic)
         self.samples_per_epoch = samples_per_epoch
         
         # load the training metrics csv to a dataframe if the last_checkpoint_dir_path is provided (we are reloading the model)
@@ -743,16 +742,14 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # update the learning rates of the optimizers if past the warmup period
         self.learning_rate_scheduler()
         
-        # Save a copy of the model to the current epoch checkpoint directory
-        # NOTE: this could be changed to every X number of epochs, but then the model loading code would need to be updated as well.
-        self.save_model_checkpoint()
-        
         # Generate validation samples
         self.generate_validation_samples()
         
-        # every X number of epochs, generate a GIF of all the saved images
-        if self.current_epoch % self.gif_creation_frequency == 0 and epoch > 0:
+        # every X number of epochs, generate a GIF of all the saved images and save the model
+        if self.current_epoch % self.gif_and_model_save_frequency == 0 and epoch > 0:
             self.generate_gif()
+            # Save a copy of the model to the current epoch checkpoint directory
+            self.save_model_checkpoint()
         
         # Calculate the duration of logging the metrics (will be logged in the next epoch log_data_to_dataframe call)
         self.metric_calc_duration = datetime.now() - self.metric_calc_start_time
@@ -766,7 +763,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         epoch = len(self.metrics_dataframe)
         # skip generating a gif if training ends on a multiple of the frequency to create a gif because it was already generated in the 
         # generate_validation_samples method at the end of the last epoch.
-        if epoch % self.gif_creation_frequency != 0:
+        if epoch % self.gif_and_model_save_frequency != 0:
             # Generate a GIF of all the saved images
             self.generate_gif()
         return
@@ -817,9 +814,11 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # get the current GPU memory usage in MB and GB
         gpu_mem_usage_mb, gpu_mem_usage_gb = get_gpu_memory_usage()
         
-        # get the critic learning rate
-        critic_learning_rate = self.model.critic_optimizer.learning_rate.numpy()
-        generator_learning_rate = self.model.gen_optimizer.learning_rate.numpy()
+        # get the critic and generator learning rates. Updated in the learning_rate_scheduler method. In the current implementation, the values
+        # are the same so we will get the learning rate from the model object to avoid floating point rounding errors that slightly change the
+        # values when extracting from self.model.critic_optimizer.learning_rate.numpy() and self.model.gen_optimizer.learning_rate.numpy()
+        critic_learning_rate = self.model.learning_rate
+        generator_learning_rate = self.model.learning_rate
         
         # Get the current time in the US Central Time Zone
         formatted_timestamp = get_timestamp()
@@ -1084,14 +1083,18 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def learning_rate_scheduler(self):
         # if we have passed the warmup period, start to decay the learning rates
         if self.current_epoch > self.model.learning_rate_warmup_epochs:
-            self.model.critic_optimizer.learning_rate = self.model.critic_optimizer.learning_rate * self.model.learning_rate_decay
-            self.model.gen_optimizer.learning_rate = self.model.gen_optimizer.learning_rate * self.model.learning_rate_decay
+            self.model.learning_rate = self.model.learning_rate * self.model.learning_rate_decay
+
+            self.model.critic_optimizer.learning_rate = self.model.learning_rate
+            self.model.gen_optimizer.learning_rate = self.model.learning_rate
         return
     
     def save_model_checkpoint(self):
+        # pass a copy of the checkpoint directory to the model so that it can save the critic and generator models to the correct directory
+        self.model.this_epoch_checkpoint_dir = self.this_epoch_checkpoint_dir
         # save a copy of the model to the current epoch checkpoint directory
-        model_save_path = self.this_epoch_checkpoint_dir.joinpath("model.keras")
-        self.model.save(model_save_path)
+        model_save_path = self.this_epoch_checkpoint_dir.joinpath("model_save")
+        self.model.save(model_save_path, zipped=False)
         return
     
     def generate_validation_samples(self):
