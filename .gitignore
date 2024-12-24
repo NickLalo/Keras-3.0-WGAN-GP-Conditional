@@ -9,6 +9,7 @@ zz_*/
 delete_me_later/
 wgan_gp_model.keras
 training_logs.txt
+training_samples.png
 
 # ignore folders that could store tons of data that shouldn't be tracked by git
 data/

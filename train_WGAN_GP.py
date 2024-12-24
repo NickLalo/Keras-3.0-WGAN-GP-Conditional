@@ -13,11 +13,6 @@ os.environ["KERAS_BACKEND"] = "tensorflow"
 import keras
 import tensorflow as tf
 
-# set a random seed for reproducibility
-seed = 112
-keras.utils.set_random_seed(seed)  # sets random seed for Tensorflow, Numpy, and Python
-tf.config.experimental.enable_op_determinism()  # sets the graph-level deterministic operations for Tensorflow (can cause a training slowdown)
-
 # Check if the GPU is available and being used
 gpus = tf.config.list_physical_devices('GPU')
 print("Is GPU available:", gpus)
@@ -37,8 +32,13 @@ print("Mixed precision policy:", keras.mixed_precision.global_policy())
 from model_and_callbacks import get_critic_model, get_generator_model, Training_Monitor, WGAN_GP
 from utils import parse_arguments, get_timestamp, Terminal_Logger, get_last_checkpoint_paths_for_reload, get_specific_checkpoint_paths_for_reload, \
     print_and_save_training_parameters, print_script_execution_time
-from load_data import load_mnist_data_for_gan
+from load_data import load_mnist_data_for_gan, visualize_training_samples
 
+
+# set a random seed for reproducibility
+seed = 112
+keras.utils.set_random_seed(seed)  # sets random seed for Tensorflow, Numpy, and Python
+tf.config.experimental.enable_op_determinism()  # sets the graph-level deterministic operations for Tensorflow (can cause a training slowdown)
 
 # Hardcoded path to the directory containing all model training runs
 WGAN_GP_MNIST_MODELS_DIR = Path("wgan_gp_mnist_training_runs")
@@ -76,7 +76,10 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         
         # Load the MNIST dataset for training a GAN
         train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
-            training_params["dataset_subset_percentage"], training_params["batch_size"])
+            training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_shift_frequency"])
+        
+        # visualize a collection of training samples
+        visualize_training_samples(train_dataset, model_training_output_dir)
         
         # initialize the critic and generator models
         critic_model = get_critic_model(img_shape, num_classes, model_training_output_dir)
@@ -96,8 +99,8 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
             learning_rate=training_params["initial_learning_rate"],
             learning_rate_warmup_epochs=training_params["learning_rate_warmup_epochs"],
             learning_rate_decay=training_params["learning_rate_decay"],
-            critic_extra_steps=5,
-            gp_weight=10.0,
+            critic_extra_steps=training_params["critic_to_generator_training_ratio"],
+            gp_weight=training_params["gradient_penalty_weight"],
             )
         
         # Compile the wgan_gp model
@@ -165,14 +168,14 @@ if __name__ == "__main__":
     # # DEBUG: a quick way to test out the model with hardcoded parameters that should be removed later
     # hardcoded_params = True
     # if hardcoded_params:
-    #     print("\nUsing HARDCODED custom parameters for the model run.")
+    #     print("\nUsing HARDCODED custom parameters for the model run.\n")
     #     training_params["fresh_start"] = True
     #     training_params["reload_last_trained_model"] = False
     #     training_params["reload_path"] = None
     #     # model_configurations["reload_path"] = Path("wgan_gp_mnist_training_runs/2024-12-21__06:13:18")
         
-    #     training_params["dataset_subset_percentage"] = 0.1
-    #     training_params["epochs"] = 5
+    #     # training_params["dataset_subset_percentage"] = 1.0
+    #     # training_params["epochs"] = 9999
     # # DEBUG: a quick way to test out the model with hardcoded parameters that should be removed later
     # ####################################################################################################
     
@@ -187,7 +190,6 @@ if __name__ == "__main__":
     training_monitor_callback = Training_Monitor(
         model_training_output_dir,
         model_checkpoints_dir,
-        num_classes=num_classes,
         latent_dim=training_params["noise_shape"],
         samples_per_epoch=samples_per_epoch,
         gif_and_model_save_frequency=training_params["gif_and_model_save_frequency"],

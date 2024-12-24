@@ -34,7 +34,7 @@ def parse_arguments():
     group = parser.add_mutually_exclusive_group()
     # fresh_start
     group.add_argument(
-        "--fresh_start", action="store_true", 
+        "--fresh_start", action="store_true",
         help="Starts a new model training run. (default if reload_last_trained_model or reload_path are not set)."
     )
     # reload_last_trained_model
@@ -44,40 +44,46 @@ def parse_arguments():
     )
     # reload_path
     group.add_argument(
-        "--reload_path", type=Path, 
+        "--reload_path", type=Path,
         help="The path to the model training run directory to reload the model from."
     )
     
     # debug_run
-    parser.add_argument("--debug_run", action="store_true", default=False, 
+    parser.add_argument("--debug_run", action="store_true", default=False,
         help="If set, runs in debug mode with a reduced dataset and fewer epochs. Cannot be set with a dataset_subset_percentage other than 1.0.")
     # dataset_subset_percentage
-    parser.add_argument("--dataset_subset_percentage", type=float, default=1.0, 
+    parser.add_argument("--dataset_subset_percentage", type=float, default=1.0,
         help="The percentage of the dataset to use for training in small subset mode. Cannot be set with debug_run.")
     # batch_size
-    parser.add_argument("--batch_size", type=int, default=512, 
+    parser.add_argument("--batch_size", type=int, default=1024,
         help="The batch size for training the model.")
     # noise_shape
-    parser.add_argument("--noise_shape", type=int, default=128, 
+    parser.add_argument("--noise_shape", type=int, default=128,
         help="The dimension of the noise vector for the generator.")
     # epochs
-    parser.add_argument("--epochs", type=int, default=100, 
+    parser.add_argument("--epochs", type=int, default=150,
         help="The number of epochs to train the model.")
     # critic_to_generator_training_ratio
-    parser.add_argument("--critic_to_generator_training_ratio", type=int, default=5, 
+    parser.add_argument("--critic_to_generator_training_ratio", type=int, default=5,
         help="The number of times the critic is trained for every time the generator is trained.")
     # initial_learning_rate
-    parser.add_argument("--initial_learning_rate", type=float, default=0.00002, 
+    parser.add_argument("--initial_learning_rate", type=float, default=0.00007,
         help="The initial learning rate for the model training.")
     # learning_rate_warmup_epochs
-    parser.add_argument("--learning_rate_warmup_epochs", type=int, default=9999, 
+    parser.add_argument("--learning_rate_warmup_epochs", type=int, default=9999,
         help="The number of epochs to warm up the learning rate.")
     # learning_rate_decay
-    parser.add_argument("--learning_rate_decay", type=float, default=0.998, 
+    parser.add_argument("--learning_rate_decay", type=float, default=0.998,
         help="The decay factor for the learning rate.")
     # gif_and_model_save_frequency
-    parser.add_argument("--gif_and_model_save_frequency", type=int, default=5, 
+    parser.add_argument("--gif_and_model_save_frequency", type=int, default=5,
         help="The frequency of saving the model and generating a gif of the model output.")
+    # gradient_penalty_weight
+    parser.add_argument("--gradient_penalty_weight", type=float, default=10.0,
+        help="The weight of the gradient penalty in the loss function.")
+    # random_shift_frequency
+    parser.add_argument("--random_shift_frequency", type=float, default=0.25,
+        help="The frequency of applying random shifts to the training images.")
     
     # Parse arguments
     args = parser.parse_args()
@@ -94,6 +100,10 @@ def parse_arguments():
     # ensure that debug_run and a non 1.0 dataset_subset_percentage are not set together
     if args.debug_run and args.dataset_subset_percentage != 1.0:
         raise ValueError("debug_run and a dataset_subset_percentage other than 1.0 cannot be set together.")
+    
+    # ensure that the random shift frequency is greater than or equal to 0 and less than or equal to 1.0
+    if args.random_shift_frequency < 0 or args.random_shift_frequency > 1.0:
+        raise ValueError("random_shift_frequency must be greater than or equal to 0 and less than or equal to 1.0.")
     
     # Convert args namespace to dictionary
     training_params = vars(args)
@@ -266,7 +276,7 @@ def get_gpu_memory_usage():
 
 def get_timestamp():
     """
-    function to get a formatted timestamp in the US Central Time Zone for logging purposes that can also be used as a unique identifier
+    function to get a formatted timestamp in the US Central Time Zone for logging purposes that can also be used as a unique identifier in file names
     
     Parameters:
         None
@@ -276,7 +286,7 @@ def get_timestamp():
     """
     # Get the current time in the US Central Time Zone with custom formatting
     central_time = datetime.now(pytz.timezone('US/Central'))
-    formatted_time = central_time.strftime("%Y-%m-%d__%H:%M:%S")
+    formatted_time = central_time.strftime("%Y-%m-%d__%H-%M-%S")
     return formatted_time
 
 
@@ -367,3 +377,9 @@ def print_script_execution_time(script_start_time):
     time_seconds = int(((script_end_time - script_start_time) % 3600) % 60)
     print(f"\nTotal execution time: {time_hours:02d}:{time_minutes:02d}:{time_seconds:02d}\n")
     return
+
+
+if __name__ == "__main__":
+    for num in range(10):
+        print("This script is a utility script and is not meant to be executed")
+        time.sleep(0.1)
