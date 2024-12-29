@@ -7,9 +7,9 @@ https://keras.io/examples/generative/wgan_gp/
 
 
 import os
+import time
 from datetime import datetime
 import shutil
-import pytz
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -58,46 +58,137 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
     Returns:
         critic_model: keras.Model, the compiled critic model
     """
-    ############################################################### Input Preparation ###############################################################
-    # Image input
-    img_input = layers.Input(shape=img_shape)
+    # ############################################################### Input Preparation ###############################################################
+    # # Image input
+    # img_input = layers.Input(shape=img_shape)
     
-    # class input
-    class_input = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming labels are integers
-    class_input_one_hot = layers.Embedding(num_classes, num_classes)(class_input)  # Convert to one-hot
-    class_input_one_hot = layers.Flatten()(class_input_one_hot)  # Flatten embedding output
+    # # class input
+    # class_input = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming labels are integers
+    # class_input_one_hot = layers.Embedding(num_classes, num_classes)(class_input)  # Convert to one-hot
+    # class_input_one_hot = layers.Flatten()(class_input_one_hot)  # Flatten embedding output
     
-    # Expand labels to match the image dimensions
-    # Fully connected layer to reshape one-hot labels to a tensor the same shape as a flattened image
-    label_tensor = layers.Dense(np.prod(img_shape))(class_input_one_hot)
-    # Reshape to match image shape (height, width, channels)
-    label_tensor = layers.Reshape(img_shape)(label_tensor)
+    # # Expand labels to match the image dimensions
+    # # Fully connected layer to reshape one-hot labels to a tensor the same shape as a flattened image
+    # label_tensor = layers.Dense(np.prod(img_shape))(class_input_one_hot)
+    # # Reshape to match image shape (height, width, channels)
+    # label_tensor = layers.Reshape(img_shape)(label_tensor)
     
-    # Concatenate image and label tensors
-    combined_input = layers.Concatenate()([img_input, label_tensor])
+    # # Concatenate image and label tensors
+    # combined_input = layers.Concatenate()([img_input, label_tensor])
     
-    ############################################################## Critic Architecture ##############################################################
-    ########## Convolutional layer 1
-    x = layers.Conv2D(filters=64, kernel_size=(5, 5), strides=(2, 2), padding="same", use_bias=True)(combined_input)
-    x = layers.LeakyReLU(0.2)(x)
+    # ############################################################## Critic Architecture ##############################################################
+    # ########## Convolutional layer 1
+    # x = layers.Conv2D(filters=64, kernel_size=(5, 5), strides=(2, 2), padding="same", use_bias=True)(combined_input)
+    # x = layers.LeakyReLU(0.2)(x)
     
-    ########## Convolutional layer 2
-    x = layers.Conv2D(filters=128, kernel_size=(5, 5), strides=(2, 2), padding="same", use_bias=True)(x)
-    x = layers.LeakyReLU(0.2)(x)
+    # ########## Convolutional layer 2
+    # x = layers.Conv2D(filters=128, kernel_size=(5, 5), strides=(2, 2), padding="same", use_bias=True)(x)
+    # x = layers.LeakyReLU(0.2)(x)
     
-    ########## Convolutional Layer 3
-    x = layers.Conv2D(filters=256, kernel_size=(5, 5), strides=(2, 2), padding="same", use_bias=True)(x)
-    x = layers.LeakyReLU(0.2)(x)
+    # ########## Convolutional Layer 3
+    # x = layers.Conv2D(filters=256, kernel_size=(5, 5), strides=(2, 2), padding="same", use_bias=True)(x)
+    # x = layers.LeakyReLU(0.2)(x)
     
-    ########## Convolutional Layer 4
-    x = layers.Conv2D(filters=512, kernel_size=(5, 5), strides=(2, 2), padding="same", use_bias=True)(x)
+    # ########## Flatten the output and add a dense layer with no activation for a single critic score
+    # x = layers.Flatten()(x)
+    # x = layers.Dense(1, use_bias=True)(x)
     
-    ########## Flatten the output and add a dense layer with no activation for a single critic score
+    # ########## Define the model with both inputs
+    # critic_model = keras.models.Model([img_input, class_input], x, name="critic")
+    
+    # -----------------------------
+    #   Inputs
+    # -----------------------------
+    img_input = layers.Input(shape=img_shape, name="image_input")
+    class_input = layers.Input(shape=(1,), dtype=tf.int32, name="class_input")
+
+    # Convert label to an embedding vector of size num_classes (or whatever dimension you prefer)
+    label_embed = layers.Embedding(num_classes, num_classes)(class_input)  # shape: (batch,1,num_classes)
+    label_embed = layers.Flatten()(label_embed)                            # shape: (batch, num_classes)
+
+    # -----------------------------
+    #   Conv Block #1
+    #   28×28 → 14×14, 64 filters
+    # -----------------------------
+    x = layers.Conv2D(
+        filters=64, kernel_size=(5,5),
+        strides=(2,2), padding="same", use_bias=True
+    )(img_input)
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    # -----------------------------
+    #   Residual Block #1 (14×14)
+    # -----------------------------
+    shortcut = x
+    x = layers.Conv2D(
+        filters=64, kernel_size=(3,3), 
+        strides=(1,1), padding="same", use_bias=True
+    )(x)
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    x = layers.Conv2D(
+        filters=64, kernel_size=(3,3), 
+        strides=(1,1), padding="same", use_bias=True
+    )(x)
+    x = layers.Add()([shortcut, x])
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    # -----------------------------
+    #   Label Fusion in the Middle
+    #   (Both x and label map have shape involving 14×14)
+    # -----------------------------
+    # Convert label_embed to a 14×14×1 map
+    label_map = layers.Dense(14 * 14, use_bias=False)(label_embed)
+    label_map = layers.Reshape((14, 14, 1))(label_map)
+    # Concatenate along the channels: x is (14,14,64), label_map is (14,14,1)
+    x = layers.Concatenate()([x, label_map])  # Now shape is (14,14,64+1) = (14,14,65)
+
+    # -----------------------------
+    #   Conv Block #2
+    #   14×14 → 7×7, 128 filters
+    # -----------------------------
+    x = layers.Conv2D(
+        filters=128, kernel_size=(5,5),
+        strides=(2,2), padding="same", use_bias=True
+    )(x)
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    # -----------------------------
+    #   Residual Block #2 (7×7)
+    # -----------------------------
+    shortcut = x
+    x = layers.Conv2D(
+        filters=128, kernel_size=(3,3),
+        strides=(1,1), padding="same", use_bias=True
+    )(x)
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    x = layers.Conv2D(
+        filters=128, kernel_size=(3,3),
+        strides=(1,1), padding="same", use_bias=True
+    )(x)
+    x = layers.Add()([shortcut, x])
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    # -----------------------------
+    #   Conv Block #3
+    #   7×7 → 4×4 (approx), 256 filters
+    # -----------------------------
+    x = layers.Conv2D(
+        filters=256, kernel_size=(5,5),
+        strides=(2,2), padding="same", use_bias=True
+    )(x)
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    # -----------------------------
+    #   Flatten + Final Dense → Score
+    # -----------------------------
     x = layers.Flatten()(x)
-    x = layers.Dense(1)(x)
-    
-    ########## Define the model with both inputs
-    critic_model = keras.models.Model([img_input, class_input], x, name="critic")
+    x = layers.Dense(1, use_bias=True)(x)
+
+    # Build the model
+    critic_model = keras.models.Model([img_input, class_input], x, name="critic_with_mid_label_fusion")
+    return critic_model
     
     ######################################################## Model Summary and Visualization ########################################################
     # get the filepath to the model_architecture_and_summary directory
@@ -139,45 +230,220 @@ def get_generator_model(noise_dim_shape: int, num_classes: int, model_training_o
     ############################################################### Input Preparation ###############################################################
     # model inputs will look like this: [noise_input, class_input]
     # Noise input
-    noise_input = layers.Input(shape=(noise_dim_shape,))
+    # noise_input = layers.Input(shape=(noise_dim_shape,))
     
-    # class input (conditional input)
-    class_input = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming class_inputs are integers
-    class_input_one_hot = layers.Embedding(num_classes, num_classes)(class_input)  # Convert to one-hot
-    class_input_one_hot = layers.Flatten()(class_input_one_hot)  # Flatten embedding output
-    # Concatenate noise input and class input
-    x = layers.Concatenate()([noise_input, class_input_one_hot])
+    # # class input (conditional input)
+    # class_input = layers.Input(shape=(1,), dtype=tf.int32)  # Assuming class_inputs are integers
+    # class_input_one_hot = layers.Embedding(num_classes, num_classes)(class_input)  # Convert to one-hot
+    # class_input_one_hot = layers.Flatten()(class_input_one_hot)  # Flatten embedding output
+    # # REVIEW: consider applying a Dense layer with tanh activation to scale to [-1, 1]
+    # # class_input_one_hot = layers.Dense(num_classes, activation="tanh")(class_input_one_hot)
     
-    ############################################################# Generator Architecture ############################################################
-    x = layers.Dense(4 * 4 * 256, use_bias=False)(x)
+    # # Concatenate noise input and class input
+    # x = layers.Concatenate()([noise_input, class_input_one_hot])
+    
+    # ############################################################# Generator Architecture ############################################################
+    # ########## Initial Dense layer
+    # x = layers.Dense(4 * 4 * 256, use_bias=False)(x)
+    # x = layers.BatchNormalization()(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    # x = layers.Reshape((4, 4, 256))(x)
+    
+    # ########## Upsample Block 1
+    # x = layers.UpSampling2D((2, 2))(x)
+    # x = layers.Conv2D(256, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+    # x = layers.BatchNormalization()(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    
+    # ########## Upsample Block 2
+    # x = layers.UpSampling2D((2, 2))(x)
+    # x = layers.Conv2D(128, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+    # x = layers.BatchNormalization()(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    
+    # ########## Upsample Block 3
+    # x = layers.UpSampling2D((2, 2))(x)
+    # x = layers.Conv2D(1, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+    # x = layers.BatchNormalization()(x)
+    # x = layers.Activation("tanh")(x)
+    
+    # # At this point, we have an output which has a shape of (32, 32, 1) but we want our output to be (28, 28, 1).
+    # # We will use a Cropping2D layer to make it (28, 28, 1).
+    # x = layers.Cropping2D((2, 2))(x)
+    
+    # ########## Define the model with both inputs
+    # generator_model = keras.models.Model([noise_input, class_input], x, name="generator")
+    
+    # ############################################################ Generator Architecture 2 ###########################################################
+    # ########## Initial Dense layer
+    # x = layers.Dense(7 * 7 * 256, use_bias=False)(x)
+    # x = layers.BatchNormalization()(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    # x = layers.Reshape((7, 7, 256))(x)
+    
+    # ########### Residual block at 14x14 resolution
+    # shortcut = x  # Save the input for the shortcut connection
+    # # First convolution
+    # x = layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(1, 1), padding="same")(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    # # Second convolution
+    # x = layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(1, 1), padding="same")(x)
+    # # Add the shortcut connection
+    # x = layers.Add()([x, shortcut])
+    # x = layers.LeakyReLU(0.2)(x)
+    
+    # ########## Upsample Block 1 transforms 7x7 -> 14x14
+    # # x = layers.UpSampling2D((2, 2))(x)
+    # # x = layers.Conv2D(256, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+    # # x = layers.BatchNormalization()(x)
+    # # x = layers.LeakyReLU(0.2)(x)
+    # x = layers.Conv2DTranspose(filters=256, kernel_size=(5,5), strides=(2,2), padding='same', use_bias=False)(x)
+    # x = layers.BatchNormalization()(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    
+    # ########### Residual block at 14x14 resolution
+    # shortcut = x  # Save the input for the shortcut connection
+    # # First convolution
+    # x = layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(1, 1), padding="same")(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    # # Second convolution
+    # x = layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(1, 1), padding="same")(x)
+    # # Add the shortcut connection
+    # x = layers.Add()([x, shortcut])
+    # x = layers.LeakyReLU(0.2)(x)
+    
+    # ########## Upsample Block 2 transforms 14x14 -> 28x28
+    # # x = layers.UpSampling2D((2, 2))(x)
+    # # x = layers.Conv2D(1, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+    # # # x = layers.BatchNormalization()(x)
+    # # x = layers.LeakyReLU(0.2)(x)
+    # x = layers.Conv2DTranspose(filters=256, kernel_size=(5,5), strides=(2,2), padding='same', use_bias=False)(x)
+    # x = layers.BatchNormalization()(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    
+    # ########### Residual block at 28x28 resolution
+    # shortcut = x  # Save the input for the shortcut connection
+    # # First convolution
+    # x = layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(1, 1), padding="same")(x)
+    # x = layers.LeakyReLU(0.2)(x)
+    # # Second convolution
+    # x = layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(1, 1), padding="same")(x)
+    # # Add the shortcut connection
+    # x = layers.Add()([x, shortcut])
+    # x = layers.LeakyReLU(0.2)(x)
+    
+    # ########## Final Layer for Generator
+    # # Use 1 filter to generate a grayscale MNIST image, and apply Tanh activation to scale to [-1, 1].
+    # x = layers.Conv2D(1, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+    # x = layers.Activation("tanh")(x)
+    
+    # ########## Define the model with both inputs
+    # generator_model = keras.models.Model([noise_input, class_input], x, name="generator")
+    
+    ############################################################ Generator Architecture 3 ###########################################################
+    # arguments
+    noise_dim = noise_dim_shape
+    embed_dim = 10
+    # -----------------------------
+    #   Inputs
+    # -----------------------------
+    noise_input = layers.Input(shape=(noise_dim,))
+    class_input = layers.Input(shape=(1,), dtype=tf.int32)
+
+    # Class embedding → Flatten
+    class_embed = layers.Embedding(num_classes, embed_dim)(class_input)
+    class_embed = layers.Flatten()(class_embed)
+
+    # Concatenate noise + embedded class
+    x = layers.Concatenate()([noise_input, class_embed])
+
+    # -----------------------------
+    #   Initial Dense + Reshape
+    # -----------------------------
+    x = layers.Dense(7 * 7 * 256, use_bias=False)(x)  
+    x = layers.BatchNormalization()(x)  
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    x = layers.Reshape((7, 7, 256))(x)
+
+    # -----------------------------
+    #   Residual Block at 7×7
+    # -----------------------------
+    shortcut = x
+    x = layers.Conv2D(256, (3,3), padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.LeakyReLU(0.2)(x)
-    x = layers.Reshape((4, 4, 256))(x)
-    
-    ########## Upsample Block 1
-    x = layers.UpSampling2D((2, 2))(x)
-    x = layers.Conv2D(256, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+
+    x = layers.Conv2D(256, (3,3), padding="same", use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+
+    x = layers.Add()([x, shortcut])  # residual add
+    x = layers.LeakyReLU(0.2)(x)
+
+    # -----------------------------
+    #   Upsample to 14×14 (256→128 filters)
+    # -----------------------------
+    x = layers.Conv2DTranspose(
+        128, (5,5), strides=(2,2), 
+        padding='same', use_bias=False
+    )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    # -----------------------------
+    #   Residual Block at 14×14
+    # -----------------------------
+    shortcut = x
+    x = layers.Conv2D(128, (3,3), padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.LeakyReLU(0.2)(x)
-    
-    ########## Upsample Block 2
-    x = layers.UpSampling2D((2, 2))(x)
-    x = layers.Conv2D(128, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+
+    x = layers.Conv2D(128, (3,3), padding="same", use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+
+    x = layers.Add()([x, shortcut])  # residual add
+    x = layers.LeakyReLU(0.2)(x)
+
+    # -----------------------------
+    #   Upsample to 28×28 (128→64 filters)
+    # -----------------------------
+    x = layers.Conv2DTranspose(
+        64, (5,5), strides=(2,2), 
+        padding='same', use_bias=False
+    )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(alpha=0.2)(x)
+
+    # -----------------------------
+    #   Residual Block at 28×28
+    #   (Optionally remove BN here if you want)
+    # -----------------------------
+    shortcut = x
+    x = layers.Conv2D(64, (3,3), padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.LeakyReLU(0.2)(x)
-    
-    ########## Upsample Block 3
-    x = layers.UpSampling2D((2, 2))(x)
-    x = layers.Conv2D(1, (5, 5), strides=(1, 1), padding="same", use_bias=False)(x)
+
+    x = layers.Conv2D(64, (3,3), padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
+
+    x = layers.Add()([x, shortcut])  
+    x = layers.LeakyReLU(0.2)(x)
+
+    # -----------------------------
+    #   Final Conv → 1 channel
+    #   (No BN, Tanh)
+    # -----------------------------
+    x = layers.Conv2D(
+        1, (5,5), padding="same", 
+        use_bias=False  # BN is off
+    )(x)
     x = layers.Activation("tanh")(x)
-    
-    # At this point, we have an output which has a shape of (32, 32, 1) but we want our output to be (28, 28, 1).
-    # We will use a Cropping2D layer to make it (28, 28, 1).
-    x = layers.Cropping2D((2, 2))(x)
-    
-    ########## Define the model with both inputs
-    generator_model = keras.models.Model([noise_input, class_input], x, name="generator")
+
+    # Define the model
+    generator_model = keras.models.Model(
+        [noise_input, class_input], x, 
+        name="better_generator"
+    )
     
     ######################################################## Model Summary and Visualization ########################################################
     # get the filepath to the model_architecture_and_summary directory
@@ -1228,3 +1494,9 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                     file.write(f"Epoch {milestone: <5} - Estimated Time to Train (HHH:MM:SS.ss): {total_time}\n")
             file.write(f"{'='*72}\n")
         return
+
+
+if __name__ == "__main__":
+    for num in range(10):
+        print("This script contains the ModelAndCallbacks class for training a GAN model and is not intended to be run directly.")
+        time.sleep(0.1)

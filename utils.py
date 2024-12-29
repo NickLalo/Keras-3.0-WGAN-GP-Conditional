@@ -61,19 +61,19 @@ def parse_arguments():
     parser.add_argument("--noise_shape", type=int, default=128,
         help="The dimension of the noise vector for the generator.")
     # epochs
-    parser.add_argument("--epochs", type=int, default=150,
+    parser.add_argument("--epochs", type=int, default=500,
         help="The number of epochs to train the model.")
     # critic_to_generator_training_ratio
     parser.add_argument("--critic_to_generator_training_ratio", type=int, default=5,
         help="The number of times the critic is trained for every time the generator is trained.")
     # initial_learning_rate
-    parser.add_argument("--initial_learning_rate", type=float, default=0.00007,
+    parser.add_argument("--initial_learning_rate", type=float, default=0.00005,
         help="The initial learning rate for the model training.")
     # learning_rate_warmup_epochs
     parser.add_argument("--learning_rate_warmup_epochs", type=int, default=9999,
         help="The number of epochs to warm up the learning rate.")
     # learning_rate_decay
-    parser.add_argument("--learning_rate_decay", type=float, default=0.998,
+    parser.add_argument("--learning_rate_decay", type=float, default=0.99,
         help="The decay factor for the learning rate.")
     # gif_and_model_save_frequency
     parser.add_argument("--gif_and_model_save_frequency", type=int, default=5,
