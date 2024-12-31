@@ -29,10 +29,11 @@ if gpus:
 keras.mixed_precision.set_global_policy("mixed_float16")
 print("Mixed precision policy:", keras.mixed_precision.global_policy())
 
-from model_and_callbacks import get_critic_model, get_generator_model, Training_Monitor, WGAN_GP
-from utils import parse_arguments, get_timestamp, Terminal_Logger, get_last_checkpoint_paths_for_reload, get_specific_checkpoint_paths_for_reload, \
-    print_and_save_training_parameters, print_script_execution_time
+from critic_and_generator_models import get_critic_model, get_generator_model
 from load_data import load_mnist_data_for_gan, visualize_training_samples
+from wgan_model_and_callback import Training_Monitor, WGAN_GP
+from utils import parse_arguments, get_timestamp, Terminal_Logger, get_last_checkpoint_paths_for_reload, get_specific_checkpoint_paths_for_reload, \
+    print_and_save_training_parameters, print_script_execution_time, get_experiment_number
 
 
 # set a random seed for reproducibility
@@ -62,7 +63,9 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         samples_per_epoch (int): The number of samples per epoch in the dataset.
     """
     if training_params["fresh_start"]:
-        this_training_run_dirname = get_timestamp()  # Get the current time in the US Central Time Zone
+        run_timestamp = get_timestamp()  # Get the current time in the US Central Time Zone
+        experiment_number = get_experiment_number(WGAN_GP_MNIST_MODELS_DIR)
+        this_training_run_dirname = f"{experiment_number}__{run_timestamp}"
         model_training_output_dir = WGAN_GP_MNIST_MODELS_DIR.joinpath(this_training_run_dirname)
         model_checkpoints_dir = model_training_output_dir.joinpath("model_checkpoints")
         os.makedirs(model_checkpoints_dir, exist_ok=True)  # includes the other directories in the path
@@ -163,21 +166,6 @@ if __name__ == "__main__":
     
     # Parse arguments and get a training parameters dictionary for the current run
     training_params = parse_arguments()
-    
-    # ####################################################################################################
-    # # DEBUG: a quick way to test out the model with hardcoded parameters that should be removed later
-    # hardcoded_params = True
-    # if hardcoded_params:
-    #     print("\nUsing HARDCODED custom parameters for the model run.\n")
-    #     training_params["fresh_start"] = True
-    #     training_params["reload_last_trained_model"] = False
-    #     training_params["reload_path"] = None
-    #     # model_configurations["reload_path"] = Path("wgan_gp_mnist_training_runs/2024-12-21__06:13:18")
-        
-    #     # training_params["dataset_subset_percentage"] = 1.0
-    #     # training_params["epochs"] = 9999
-    # # DEBUG: a quick way to test out the model with hardcoded parameters that should be removed later
-    # ####################################################################################################
     
     # get the wgan_gp and training data. Model is either created new one or loaded from a previous run's checkpoint
     wgan_gp, train_dataset, model_training_output_dir, model_checkpoints_dir, last_checkpoint_dir_path, num_classes, samples_per_epoch = \

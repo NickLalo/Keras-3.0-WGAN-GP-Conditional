@@ -55,19 +55,22 @@ def parse_arguments():
     parser.add_argument("--dataset_subset_percentage", type=float, default=1.0,
         help="The percentage of the dataset to use for training in small subset mode. Cannot be set with debug_run.")
     # batch_size
-    parser.add_argument("--batch_size", type=int, default=1024,
+    parser.add_argument("--batch_size", type=int, default=512,
         help="The batch size for training the model.")
     # noise_shape
     parser.add_argument("--noise_shape", type=int, default=128,
         help="The dimension of the noise vector for the generator.")
     # epochs
-    parser.add_argument("--epochs", type=int, default=500,
+    parser.add_argument("--epochs", type=int, default=300,
         help="The number of epochs to train the model.")
     # critic_to_generator_training_ratio
     parser.add_argument("--critic_to_generator_training_ratio", type=int, default=5,
         help="The number of times the critic is trained for every time the generator is trained.")
+    # gradient_penalty_weight
+    parser.add_argument("--gradient_penalty_weight", type=float, default=10.0,
+        help="The weight of the gradient penalty in the loss function.")
     # initial_learning_rate
-    parser.add_argument("--initial_learning_rate", type=float, default=0.00005,
+    parser.add_argument("--initial_learning_rate", type=float, default=1e-6,
         help="The initial learning rate for the model training.")
     # learning_rate_warmup_epochs
     parser.add_argument("--learning_rate_warmup_epochs", type=int, default=9999,
@@ -75,15 +78,12 @@ def parse_arguments():
     # learning_rate_decay
     parser.add_argument("--learning_rate_decay", type=float, default=0.99,
         help="The decay factor for the learning rate.")
-    # gif_and_model_save_frequency
-    parser.add_argument("--gif_and_model_save_frequency", type=int, default=5,
-        help="The frequency of saving the model and generating a gif of the model output.")
-    # gradient_penalty_weight
-    parser.add_argument("--gradient_penalty_weight", type=float, default=10.0,
-        help="The weight of the gradient penalty in the loss function.")
     # random_shift_frequency
     parser.add_argument("--random_shift_frequency", type=float, default=0.25,
         help="The frequency of applying random shifts to the training images.")
+    # gif_and_model_save_frequency
+    parser.add_argument("--gif_and_model_save_frequency", type=int, default=5,
+        help="The frequency of saving the model and generating a gif of the model output.")
     
     # Parse arguments
     args = parser.parse_args()
@@ -288,6 +288,18 @@ def get_timestamp():
     central_time = datetime.now(pytz.timezone('US/Central'))
     formatted_time = central_time.strftime("%Y-%m-%d__%H-%M-%S")
     return formatted_time
+
+
+def get_experiment_number(experiment_save_dir):
+    """
+    function to get a 4-digit experiment number to put at the beginning of the experiment save directory name
+    """
+    # get the experiment numbers of the directories in the experiment save directory
+    experiment_dirs = os.listdir(experiment_save_dir)
+    current_experiment_count = len(experiment_dirs)
+    this_experiment_number = current_experiment_count + 1
+    formatted_experiment_number = f"{this_experiment_number:04}"
+    return formatted_experiment_number
 
 
 def get_readable_time_string(seconds_input: float):
