@@ -1,5 +1,5 @@
 """
-critic and generator model definitions and callbacks
+critic and generator model definitions for the WGAN-GP model.
 """
 
 
@@ -10,11 +10,6 @@ from keras import layers
 import tensorflow as tf
 
 
-# Clear all previously registered custom objects. Necessary addition for loading models with custom objects.
-keras.saving.get_custom_objects().clear()
-
-
-@keras.saving.register_keras_serializable(package="critic_model", name="critic_model")
 def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_dir: Path):
     """
     initialize the critic using the Keras Functional API. The critic model takes as input an image tensor and a label tensor and outputs a single
@@ -36,17 +31,15 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
     Returns:
         critic_model: keras.Model, the compiled critic model
     """
-    # -----------------------------
-    #   Inputs
-    # -----------------------------
+    ############################################################### Input Preparation ###############################################################
     img_input = layers.Input(shape=img_shape, name="image_input")
     class_input = layers.Input(shape=(1,), dtype=tf.int32, name="class_input")
-
+    
     # -----------------------------
     #   Label Embedding & Map
     # -----------------------------
     # 1) Convert label to an embedding
-    label_embed = layers.Embedding(input_dim=num_classes, output_dim=10)(class_input)
+    label_embed = layers.Embedding(input_dim=num_classes, output_dim=32)(class_input)
     label_embed = layers.Flatten()(label_embed)
     
     # 2) Create a 28×28 "label map"
@@ -55,70 +48,46 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
     
     # 3) Concatenate label_map with the image → (28,28,2)
     x = layers.Concatenate()([img_input, label_map])
-    
+    ############################################################# Generator Architecture ############################################################
     # -----------------------------
-    #   (28×28) Conv + Residual
+    #   Conv + Residual (28×28)
     # -----------------------------
     # Initial conv (stride=1) to blend channels
-    x = layers.Conv2D(filters=64, kernel_size=3, strides=1, padding="same")(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
+    x = layers.Conv2D(filters=64, kernel_size=(3, 3), strides=1, padding="same")(x)
+    x = layers.LeakyReLU(0.2)(x)
+    
     # Residual block at 28×28
     shortcut = x
-    x = layers.Conv2D(filters=64, kernel_size=3, strides=1, padding="same")(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-    x = layers.Conv2D(filters=64, kernel_size=3, strides=1, padding="same")(x)
+    x = layers.Conv2D(filters=64, kernel_size=(3, 3), strides=1, padding="same")(x)
+    x = layers.LeakyReLU(0.2)(x)
+    x = layers.Conv2D(filters=64, kernel_size=(3, 3), strides=1, padding="same")(x)
     x = layers.Add()([shortcut, x])
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
+    x = layers.LeakyReLU(0.2)(x)
+    
     # -----------------------------
     #   Downsample (28×28 → 14×14)
     # -----------------------------
-    x = layers.Conv2D(filters=128, kernel_size=4, strides=2, padding="same")(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
-    # Residual block at 14×14
-    shortcut = x
-    x = layers.Conv2D(filters=128, kernel_size=3, strides=1, padding="same")(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-    x = layers.Conv2D(filters=128, kernel_size=3, strides=1, padding="same")(x)
-    x = layers.Add()([shortcut, x])
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
+    x = layers.Conv2D(filters=64, kernel_size=(4, 4), strides=2, padding="same")(x)
+    x = layers.LeakyReLU(0.2)(x)
+    
     # -----------------------------
     #   Downsample (14×14 → 7×7)
     # -----------------------------
-    x = layers.Conv2D(filters=128, kernel_size=4, strides=2, padding="same")(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
-    # Residual block at 7×7
-    shortcut = x
-    x = layers.Conv2D(filters=128, kernel_size=3, strides=1, padding="same")(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-    x = layers.Conv2D(filters=128, kernel_size=3, strides=1, padding="same")(x)
-    x = layers.Add()([shortcut, x])
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
+    x = layers.Conv2D(filters=64, kernel_size=(4, 4), strides=2, padding="same")(x)
+    x = layers.LeakyReLU(0.2)(x)
+    
     # -----------------------------
     #   Downsample (7×7 → 4×4)
     # -----------------------------
-    x = layers.Conv2D(filters=256, kernel_size=4, strides=2, padding="same")(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
-    # Residual block at 4×4
-    shortcut = x
-    x = layers.Conv2D(filters=256, kernel_size=3, strides=1, padding="same")(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-    x = layers.Conv2D(filters=256, kernel_size=3, strides=1, padding="same")(x)
-    x = layers.Add()([shortcut, x])
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
+    x = layers.Conv2D(filters=32, kernel_size=(4, 4), strides=2, padding="same")(x)
+    x = layers.LeakyReLU(0.2)(x)
+    
     # -----------------------------
     #   Final Classification
     # -----------------------------
     x = layers.Flatten()(x)
     x = layers.Dense(1, use_bias=True)(x)
-
+    
     # Build the critic model
     critic_model = tf.keras.models.Model(
         [img_input, class_input],
@@ -152,7 +121,6 @@ def get_critic_model(img_shape: tuple, num_classes: int, model_training_output_d
     return critic_model
 
 
-@keras.saving.register_keras_serializable(package="generator_model", name="generator_model")
 def get_generator_model(noise_dim: int, num_classes: int, model_training_output_dir: Path):
     """
     Builds and returns a generator model for a Wasserstein GAN with Gradient Penalty (WGAN-GP).
@@ -164,106 +132,71 @@ def get_generator_model(noise_dim: int, num_classes: int, model_training_output_
         keras.models.Model: A Keras Model representing the generator.
     """
     ############################################################### Input Preparation ###############################################################
-    # arguments
-    embed_dim = 10
-    # -----------------------------
-    #   Inputs
-    # -----------------------------
     noise_input = layers.Input(shape=(noise_dim,))
     class_input = layers.Input(shape=(1,), dtype=tf.int32)
-
+    
     # Class embedding → Flatten
-    class_embed = layers.Embedding(num_classes, embed_dim)(class_input)
+    class_embed = layers.Embedding(input_dim=num_classes, output_dim=32)(class_input)
     class_embed = layers.Flatten()(class_embed)
-
+    
     # Concatenate noise + embedded class
     x = layers.Concatenate()([noise_input, class_embed])
     ############################################################# Generator Architecture ############################################################
     # -----------------------------
-    #   Initial Dense + Reshape
+    #   Initial Dense + Reshape (7×7)
     # -----------------------------
-    x = layers.Dense(7 * 7 * 256, use_bias=False)(x)  
+    x = layers.Dense(7 * 7 * 32, use_bias=False)(x)  
     x = layers.BatchNormalization()(x)  
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
-    x = layers.Reshape((7, 7, 256))(x)
-
+    x = layers.LeakyReLU(0.2)(x)
+    x = layers.Reshape((7, 7, 32))(x)
+    
     # -----------------------------
-    #   Residual Block at 7×7
+    #   Upsample (7×7 → 14×14)
     # -----------------------------
+    x = layers.Conv2DTranspose(filters=32, kernel_size=(5, 5), strides=(2, 2), padding='same', use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(0.2)(x)
+    
+    # -----------------------------
+    #   Upsample (14×14 → 28×28)
+    # -----------------------------
+    x = layers.Conv2DTranspose(filters=64, kernel_size=(5, 5), strides=(2, 2), padding='same', use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(0.2)(x)
+    
+    # -----------------------------
+    #   Conv + Residual Block (28×28)
+    # -----------------------------
+    x = layers.Conv2D(filters=64, kernel_size=(3, 3), padding="same", use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(0.2)(x)
+    
     shortcut = x
-    x = layers.Conv2D(256, (3,3), padding="same", use_bias=False)(x)
+    x = layers.Conv2D(filters=64, kernel_size=(3, 3), padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.LeakyReLU(0.2)(x)
-
-    x = layers.Conv2D(256, (3,3), padding="same", use_bias=False)(x)
+    
+    x = layers.Conv2D(filters=64, kernel_size=(3, 3), padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
-
-    x = layers.Add()([x, shortcut])  # residual add
+    
+    x = layers.Add()([x, shortcut])
     x = layers.LeakyReLU(0.2)(x)
-
+    
     # -----------------------------
-    #   Upsample to 14×14 (256→128 filters)
+    #   Conv (28×28)
     # -----------------------------
-    x = layers.Conv2DTranspose(
-        128, (5,5), strides=(2,2), 
-        padding='same', use_bias=False
-    )(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
-    # -----------------------------
-    #   Residual Block at 14×14
-    # -----------------------------
-    shortcut = x
-    x = layers.Conv2D(128, (3,3), padding="same", use_bias=False)(x)
+    x = layers.Conv2D(filters=64, kernel_size=(3, 3), padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.LeakyReLU(0.2)(x)
-
-    x = layers.Conv2D(128, (3,3), padding="same", use_bias=False)(x)
-    x = layers.BatchNormalization()(x)
-
-    x = layers.Add()([x, shortcut])  # residual add
-    x = layers.LeakyReLU(0.2)(x)
-
-    # -----------------------------
-    #   Upsample to 28×28 (128→64 filters)
-    # -----------------------------
-    x = layers.Conv2DTranspose(
-        64, (5,5), strides=(2,2), 
-        padding='same', use_bias=False
-    )(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.LeakyReLU(alpha=0.2)(x)
-
-    # -----------------------------
-    #   Residual Block at 28×28
-    # -----------------------------
-    shortcut = x
-    x = layers.Conv2D(64, (3,3), padding="same", use_bias=False)(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.LeakyReLU(0.2)(x)
-
-    x = layers.Conv2D(64, (3,3), padding="same", use_bias=False)(x)
-    x = layers.BatchNormalization()(x)
-
-    x = layers.Add()([x, shortcut])  
-    x = layers.LeakyReLU(0.2)(x)
-
+    
     # -----------------------------
     #   Final Conv → 1 channel
     # -----------------------------
-    x = layers.Conv2D(
-        1, (5,5), padding="same", 
-        use_bias=False
-    )(x)
+    x = layers.Conv2D(filters=1, kernel_size=(3, 3), padding="same", use_bias=False)(x)
     x = layers.Activation("tanh")(x)
-
+    
     # Define the model
-    generator_model = keras.models.Model(
-        [noise_input, class_input], x, 
-        name="better_generator"
-    )
+    generator_model = keras.models.Model([noise_input, class_input], x, name="generator")
     
     ######################################################## Model Summary and Visualization ########################################################
     # get the filepath to the model_architecture_and_summary directory

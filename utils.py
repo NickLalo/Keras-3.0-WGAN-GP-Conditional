@@ -7,6 +7,7 @@ import os
 import sys
 import io
 import time
+import shutil
 import traceback
 from pathlib import Path
 import argparse
@@ -28,8 +29,13 @@ def parse_arguments():
     Returns:
         model_configurations (dict): Dictionary of parsed model configurations.
     """
-    ######################################## Define arguments ########################################
     parser = argparse.ArgumentParser(description="Train a WGAN-GP model on MNIST data.")
+    
+    ################################################################### debug run ####################################################################
+    parser.add_argument("--debug_run", action="store_true", default=False,
+        help="If set, runs in debug mode with a reduced dataset and fewer epochs. Cannot be set with a dataset_subset_percentage other than 1.0.")
+    
+    ########################################################### loading specific arguments ###########################################################
     # Create a mutually exclusive group for fresh start or reload options
     group = parser.add_mutually_exclusive_group()
     # fresh_start
@@ -48,47 +54,66 @@ def parse_arguments():
         help="The path to the model training run directory to reload the model from."
     )
     
-    # debug_run
-    parser.add_argument("--debug_run", action="store_true", default=False,
-        help="If set, runs in debug mode with a reduced dataset and fewer epochs. Cannot be set with a dataset_subset_percentage other than 1.0.")
+    ############################################################### dataset arguments ################################################################
     # dataset_subset_percentage
     parser.add_argument("--dataset_subset_percentage", type=float, default=1.0,
         help="The percentage of the dataset to use for training in small subset mode. Cannot be set with debug_run.")
-    # batch_size
-    parser.add_argument("--batch_size", type=int, default=512,
-        help="The batch size for training the model.")
+    # random_shift_frequency
+    parser.add_argument("--random_rotate_frequency", type=float, default=0.0,
+        help="The frequency of applying random rotations to the training images. e.g. 0.5 means 50% of the time.")
+    # random_translate_frequency
+    parser.add_argument("--random_translate_frequency", type=float, default=0.0,
+        help="The frequency of applying random translations to the training images. e.g. 0.5 means 50% of the time.")
+    # random_zoom_frequency
+    parser.add_argument("--random_zoom_frequency", type=float, default=0.0,
+        help="The frequency of applying random zooms to the training images. e.g. 0.5 means 50% of the time.")
+    
+    ########################################################## model and training arguments ##########################################################
     # noise_shape
     parser.add_argument("--noise_shape", type=int, default=128,
         help="The dimension of the noise vector for the generator.")
+    # batch_size
+    parser.add_argument("--batch_size", type=int, default=512,
+        help="The batch size for training the model.")
     # epochs
-    parser.add_argument("--epochs", type=int, default=300,
-        help="The number of epochs to train the model.")
+    parser.add_argument("--epochs", type=int, default=200,
+        help="The number of epochs to train the model on the current run. On reload, the model will train this many more epochs.")
     # critic_to_generator_training_ratio
-    parser.add_argument("--critic_to_generator_training_ratio", type=int, default=5,
+    parser.add_argument("--critic_to_generator_training_ratio", type=int, default=4,
         help="The number of times the critic is trained for every time the generator is trained.")
     # gradient_penalty_weight
     parser.add_argument("--gradient_penalty_weight", type=float, default=10.0,
         help="The weight of the gradient penalty in the loss function.")
-    # initial_learning_rate
-    parser.add_argument("--initial_learning_rate", type=float, default=1e-6,
+    # initial_critic_learning_rate
+    parser.add_argument("--initial_critic_learning_rate", type=float, default=6e-5,
+        help="The initial learning rate for the model training.")
+    # initial_generator_learning_rate
+    parser.add_argument("--initial_generator_learning_rate", type=float, default=1e-4,
         help="The initial learning rate for the model training.")
     # learning_rate_warmup_epochs
-    parser.add_argument("--learning_rate_warmup_epochs", type=int, default=9999,
+    parser.add_argument("--learning_rate_warmup_epochs", type=int, default=100,
         help="The number of epochs to warm up the learning rate.")
     # learning_rate_decay
-    parser.add_argument("--learning_rate_decay", type=float, default=0.99,
+    parser.add_argument("--learning_rate_decay", type=float, default=0.95,
         help="The decay factor for the learning rate.")
-    # random_shift_frequency
-    parser.add_argument("--random_shift_frequency", type=float, default=0.25,
-        help="The frequency of applying random shifts to the training images.")
-    # gif_and_model_save_frequency
-    parser.add_argument("--gif_and_model_save_frequency", type=int, default=5,
-        help="The frequency of saving the model and generating a gif of the model output.")
+    # min_critic_learning_rate
+    parser.add_argument("--min_critic_learning_rate", type=float, default=6e-6,
+        help="The minimum learning rate for the critic.")
+    # min_generator_learning_rate
+    parser.add_argument("--min_generator_learning_rate", type=float, default=1e-5,
+        help="The minimum learning rate for the generator.")
     
+    ######################################################### model and video save frequency #########################################################
+    # model_save_frequency
+    parser.add_argument("--model_save_frequency", type=int, default=10,
+        help="The frequency of saving the model.")
+    # video_of_validation_frequency
+    parser.add_argument("--video_of_validation_frequency", type=int, default=1,
+        help="The frequency of creating a video of the validation samples.")
+    
+    ############################################################### validate arguments ###############################################################
     # Parse arguments
     args = parser.parse_args()
-    
-    ######################################## Validate arguments ########################################
     # Default to fresh_start if neither reload_last_trained_model nor reload_path are set
     if not args.reload_last_trained_model and args.reload_path is None:
         args.fresh_start = True
@@ -101,9 +126,13 @@ def parse_arguments():
     if args.debug_run and args.dataset_subset_percentage != 1.0:
         raise ValueError("debug_run and a dataset_subset_percentage other than 1.0 cannot be set together.")
     
-    # ensure that the random shift frequency is greater than or equal to 0 and less than or equal to 1.0
-    if args.random_shift_frequency < 0 or args.random_shift_frequency > 1.0:
-        raise ValueError("random_shift_frequency must be greater than or equal to 0 and less than or equal to 1.0.")
+    # ensure that the random augmentations are between 0 and 1.0
+    if args.random_rotate_frequency < 0 or args.random_rotate_frequency > 1.0:
+        raise ValueError("random_rotate_frequency must be between 0 and 1.0.")
+    if args.random_translate_frequency < 0 or args.random_translate_frequency > 1.0:
+        raise ValueError("random_translate_frequency must be between 0 and 1.0.")
+    if args.random_zoom_frequency < 0 or args.random_zoom_frequency > 1.0:
+        raise ValueError("random_zoom_frequency must be between 0 and 1.0.")
     
     # Convert args namespace to dictionary
     training_params = vars(args)
@@ -186,6 +215,46 @@ def get_specific_checkpoint_paths_for_reload(reload_path: Path):
         exit()
     
     return model_checkpoints_dir, last_checkpoint_dir_path, model_save_file_path
+
+
+def get_last_model_save_dir_path(model_checkpoints_dir):
+    """
+    helper script for the end of the training script to get the path to the last model save directory
+    
+    Arguments:
+        model_checkpoints_dir (Path): the path to the directory containing the model checkpoint directories
+    
+    Returns:
+        model_save_file_path (Path): the path to the last model save directory
+    """
+    # get a sorted list of all the model checkpoint directories
+    sorted_checkpoint_dirs = sorted(os.listdir(model_checkpoints_dir))
+    # only look at the last checkpoint directory
+    last_checkpoint_dir_path = model_checkpoints_dir.joinpath(sorted_checkpoint_dirs[-1])
+    # get the path to the model save directory in the last checkpoint directory
+    model_save_file_path = last_checkpoint_dir_path.joinpath("model_save")
+    return model_save_file_path
+
+
+def backup_model_code(model_training_output_dir: Path):
+    """
+    extra mechanism to backup the code used for a specific model training run assuming a hardcoded file name is used and everything is run from the
+    base directory. This is not best practice, but is a quick and hacky way to backup the code used for a specific model training run.
+    
+    arguments:
+        model_training_output_dir: Path object, the directory where the model training output is stored
+    
+    returns:
+        None
+    """
+    model_code_source = Path("critic_and_generator_models.py")
+    model_code_destination = model_training_output_dir.joinpath("model_architecture_and_summary").joinpath(model_code_source)
+    if model_code_source.exists():
+        shutil.copy(model_code_source, model_code_destination)
+        print(f"Code file {model_code_source} backed up successfully.")
+    else:
+        print(f"Code file {model_code_source} does not exist. Skipping backup of code file.")
+    return
 
 
 def print_and_save_training_parameters(training_parameters, model_training_output_dir):

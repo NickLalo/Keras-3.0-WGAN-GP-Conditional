@@ -7,6 +7,7 @@ https://keras.io/examples/generative/wgan_gp/
 import os
 import time
 from pathlib import Path
+import numpy as np
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
 
@@ -31,9 +32,10 @@ print("Mixed precision policy:", keras.mixed_precision.global_policy())
 
 from critic_and_generator_models import get_critic_model, get_generator_model
 from load_data import load_mnist_data_for_gan, visualize_training_samples
-from wgan_model_and_callback import Training_Monitor, WGAN_GP
+from wgan_gp_model import WGAN_GP
+from training_monitor_callback import Training_Monitor
 from utils import parse_arguments, get_timestamp, Terminal_Logger, get_last_checkpoint_paths_for_reload, get_specific_checkpoint_paths_for_reload, \
-    print_and_save_training_parameters, print_script_execution_time, get_experiment_number
+    print_and_save_training_parameters, print_script_execution_time, get_experiment_number, get_last_model_save_dir_path, backup_model_code
 
 
 # set a random seed for reproducibility
@@ -65,21 +67,22 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
     if training_params["fresh_start"]:
         run_timestamp = get_timestamp()  # Get the current time in the US Central Time Zone
         experiment_number = get_experiment_number(WGAN_GP_MNIST_MODELS_DIR)
-        this_training_run_dirname = f"{experiment_number}__{run_timestamp}"
+        this_training_run_dirname = f"{run_timestamp}__{experiment_number}"
         model_training_output_dir = WGAN_GP_MNIST_MODELS_DIR.joinpath(this_training_run_dirname)
         model_checkpoints_dir = model_training_output_dir.joinpath("model_checkpoints")
         os.makedirs(model_checkpoints_dir, exist_ok=True)  # includes the other directories in the path
         
         # create a log file to save the terminal output in the model and metrics directory
         terminal_output_log_filename = model_training_output_dir.joinpath("_terminal_output_logs.txt")
-        terminal_logger = Terminal_Logger(terminal_output_log_filename)
+        _ = Terminal_Logger(terminal_output_log_filename)  # don't need to save the logger object
         
         # last checkpoint dir set to None to indicate that we are not loading a model from a checkpoint
         last_checkpoint_dir_path = None
         
-        # Load the MNIST dataset for training a GAN
+        # Load the MNIST dataset for training a WGAN
         train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
-            training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_shift_frequency"])
+            training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_rotate_frequency"],
+            training_params["random_translate_frequency"], training_params["random_zoom_frequency"])
         
         # visualize a collection of training samples
         visualize_training_samples(train_dataset, model_training_output_dir)
@@ -88,9 +91,12 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         critic_model = get_critic_model(img_shape, num_classes, model_training_output_dir)
         generator_model = get_generator_model(training_params["noise_shape"], num_classes, model_training_output_dir)
         
+        # save copy of the critic and generator code to the model training output directory
+        backup_model_code(model_training_output_dir)
+        
         # Initialize the optimizers
-        generator_optimizer = keras.optimizers.Adam(learning_rate=training_params["initial_learning_rate"], beta_1=0.5, beta_2=0.9)
-        critic_optimizer = keras.optimizers.Adam(learning_rate=training_params["initial_learning_rate"], beta_1=0.5, beta_2=0.9)
+        generator_optimizer = keras.optimizers.Adam(learning_rate=training_params["initial_generator_learning_rate"], beta_1=0.5, beta_2=0.9)
+        critic_optimizer = keras.optimizers.Adam(learning_rate=training_params["initial_critic_learning_rate"], beta_1=0.5, beta_2=0.9)
         
         # Get the wgan_gp model
         wgan_gp = WGAN_GP(
@@ -99,9 +105,12 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
             num_classes=num_classes,
             latent_dim=training_params["noise_shape"],
             critic_input_shape=img_shape,
-            learning_rate=training_params["initial_learning_rate"],
+            critic_learning_rate=training_params["initial_critic_learning_rate"],
+            generator_learning_rate=training_params["initial_generator_learning_rate"],
             learning_rate_warmup_epochs=training_params["learning_rate_warmup_epochs"],
             learning_rate_decay=training_params["learning_rate_decay"],
+            min_critic_learning_rate=training_params["min_critic_learning_rate"],
+            min_generator_learning_rate=training_params["min_generator_learning_rate"],
             critic_extra_steps=training_params["critic_to_generator_training_ratio"],
             gp_weight=training_params["gradient_penalty_weight"],
             )
@@ -111,54 +120,73 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
             critic_optimizer=critic_optimizer,
             gen_optimizer=generator_optimizer,
             )
-    elif training_params["reload_last_trained_model"]:
-        # find the last model trained on to continue training
-        last_model_training_run_dir, model_checkpoints_dir, last_checkpoint_dir_path, \
-            model_save_file_path = get_last_checkpoint_paths_for_reload(WGAN_GP_MNIST_MODELS_DIR)
+    else:
+        if training_params["reload_last_trained_model"]:
+            # find the last model trained on to continue training
+            last_model_training_run_dir, model_checkpoints_dir, last_checkpoint_dir_path, \
+                model_save_file_path = get_last_checkpoint_paths_for_reload(WGAN_GP_MNIST_MODELS_DIR)
+            
+            # set the model training output directory to the last model training run directory
+            model_training_output_dir = last_model_training_run_dir
+        elif training_params["reload_path"] is not None:
+            # set the model training output directory to the reload path
+            model_training_output_dir = training_params["reload_path"]
+            
+            # find the specific model trained on to continue training
+            model_checkpoints_dir, last_checkpoint_dir_path, model_save_file_path = \
+                get_specific_checkpoint_paths_for_reload(training_params["reload_path"])
         
-        # set the model training output directory to the last model training run directory
-        model_training_output_dir = last_model_training_run_dir
+        # create a log file to save the terminal output in the model training output directory
+        terminal_output_log_filename = model_training_output_dir.joinpath("_terminal_output_logs.txt")
+        _ = Terminal_Logger(terminal_output_log_filename)  # don't need to save the logger object
         
-        # create a log file to save the terminal output in the model and metrics directory
-        terminal_output_log_filename = last_model_training_run_dir.joinpath("_terminal_output_logs.txt")
-        terminal_logger = Terminal_Logger(terminal_output_log_filename)
+        # Load the MNIST dataset for training a WGAN
+        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
+            training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_rotate_frequency"],
+            training_params["random_translate_frequency"], training_params["random_zoom_frequency"])
         
         # print out info about the model being reloaded
-        print(f"loading model from last checkpoint: {last_checkpoint_dir_path}")
+        print(f"loading model from checkpoint: {last_checkpoint_dir_path}")
         print(f"Model save file path: {model_save_file_path}")
-        
-        # Load the MNIST dataset for training a GAN
-        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
-            training_params["dataset_subset_percentage"], training_params["batch_size"])
         
         # load the model from the last checkpoint
         wgan_gp = keras.models.load_model(model_save_file_path)
-    elif training_params["reload_path"] is not None:
-        # set the model training output directory to the reload path
-        model_training_output_dir = training_params["reload_path"]
-        
-        # find the specific model trained on to continue training
-        model_checkpoints_dir, last_checkpoint_dir_path, last_model_save_file_path = \
-            get_specific_checkpoint_paths_for_reload(training_params["reload_path"])
-        
-        # create a log file to save the terminal output in the model and metrics directory
-        terminal_output_log_filename = model_training_output_dir.joinpath("_terminal_output_logs.txt")
-        terminal_logger = Terminal_Logger(terminal_output_log_filename)
-        
-        # print out info about the model being reloaded
-        print(f"loading model from last checkpoint: {last_checkpoint_dir_path}")
-        print(f"Model save file path: {last_model_save_file_path}")
-        
-        # Load the MNIST dataset for training a GAN
-        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
-            training_params["dataset_subset_percentage"], training_params["batch_size"])
-        
-        # load the model from the specific checkpoint
-        wgan_gp = keras.models.load_model(last_model_save_file_path)
-    else:
-        raise ValueError("One of fresh_start, reload_last_trained_model, or reload_path must be set to train the model.")
+    
+    # Print the training parameters to the terminal and save them to a file
+    print_and_save_training_parameters(training_params, model_training_output_dir)
     
     return wgan_gp, train_dataset, model_training_output_dir, model_checkpoints_dir, last_checkpoint_dir_path, num_classes, samples_per_epoch
+
+
+def model_reload_test(wgan_gp, model_checkpoints_dir):
+    """
+    Tests the consistency of the WGAN-GP model by comparing the outputs of the 
+    generator before and after reloading the model from the last checkpoint.
+    Args:
+        wgan_gp: The trained WGAN-GP model instance.
+        model_checkpoints_dir (str): Directory path where model checkpoints are saved.
+    Returns:
+        None. Prints whether the model reload test passed or failed based on 
+        the comparison of generated images.
+    
+    """
+    # generate some images with the trained model
+    noise = tf.random.normal([10, training_params["noise_shape"]])
+    labels = tf.convert_to_tensor([x for x in range(10)], dtype=tf.int32)
+    generated_image = wgan_gp.generator.predict([noise, labels])
+    
+    # reload the model and regenerate the images
+    last_model_save_dir_path = get_last_model_save_dir_path(model_checkpoints_dir)
+    reloaded_wgan_gp = keras.models.load_model(last_model_save_dir_path)
+    reloaded_generated_image = reloaded_wgan_gp.generator.predict([noise, labels])
+    
+    # compare the generated images between the trained model and the reloaded model with a numpy all close check
+    all_close_results = np.allclose(generated_image, reloaded_generated_image, atol=1e-6)
+    if all_close_results:
+        print("model reload test passed!")
+    else:
+        print("model reload test failed!")
+    return
 
 
 if __name__ == "__main__":
@@ -171,16 +199,14 @@ if __name__ == "__main__":
     wgan_gp, train_dataset, model_training_output_dir, model_checkpoints_dir, last_checkpoint_dir_path, num_classes, samples_per_epoch = \
         load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR)
     
-    # Print the training parameters to the terminal
-    print_and_save_training_parameters(training_params, model_training_output_dir)
-    
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
         model_training_output_dir,
         model_checkpoints_dir,
-        latent_dim=training_params["noise_shape"],
+        noise_dim=training_params["noise_shape"],
         samples_per_epoch=samples_per_epoch,
-        gif_and_model_save_frequency=training_params["gif_and_model_save_frequency"],
+        model_save_frequency=training_params["model_save_frequency"],
+        video_of_validation_frequency=training_params["video_of_validation_frequency"],
         last_checkpoint_dir_path=last_checkpoint_dir_path
         )
     
@@ -193,5 +219,8 @@ if __name__ == "__main__":
             training_monitor_callback,
             ]
         )
+    
+    # Test that the model can be reloaded and generate the same output
+    model_reload_test(wgan_gp, model_checkpoints_dir)
     
     print_script_execution_time(script_start_time)

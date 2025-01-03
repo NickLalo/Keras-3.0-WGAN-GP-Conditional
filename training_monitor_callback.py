@@ -1,7 +1,6 @@
 """
-wgan-gp model definition and callback
-
-wgan-gp combines the critic and generator into one model for training.
+training monitor callback for logging training metrics, saving model checkpoints, generating validation samples, and creating plots and 
+visualizations of the wgan-gp training progress.
 """
 
 
@@ -9,310 +8,16 @@ import os
 import time
 from datetime import datetime
 import shutil
+from tqdm import tqdm
 import pandas as pd
-import keras
+import cv2
 import tensorflow as tf
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use("Agg")  # set to use the "Agg" to avoid tkinter error
 from PIL import Image
-import warnings
 
 from utils import get_memory_usage, get_gpu_memory_usage, get_timestamp, get_readable_time_string
-
-
-# choose to ignore the specific warning for loading optimizers as our WGAN_GP class handles this in the compile_from_config method. This method 
-# may not perfectly recreate the optimizers, but it doesn't seem to cause any issues in testing so far.
-warnings.filterwarnings(
-    "ignore", 
-    message=r"Skipping variable loading for optimizer.*",
-    category=UserWarning
-)
-
-# Clear all previously registered custom objects. Necessary addition for loading models with custom objects.
-keras.saving.get_custom_objects().clear()
-
-@keras.saving.register_keras_serializable(package="custom_wgan_gp", name="custom_wgan_gp")  # REVIEW: maybe this isn't necessary
-class WGAN_GP(keras.Model):
-    """
-    WGAN-GP model
-    """
-    def __init__(
-        self,
-        critic,
-        generator,
-        num_classes,
-        latent_dim,
-        learning_rate,
-        learning_rate_warmup_epochs,
-        learning_rate_decay,
-        critic_extra_steps=5,
-        critic_input_shape=None,
-        gp_weight=10.0,
-        **kwargs
-    ):
-        super().__init__(**kwargs)
-        self.critic = critic
-        self.generator = generator
-        self.num_classes = num_classes
-        self.latent_dim = latent_dim
-        
-        # learning rate parameters used by the learning_rate_scheduler method in the Training_Monitor callback
-        # the learning rate for the critic and generator optimizers
-        self.learning_rate = learning_rate
-        # learning rate warmup epochs value is the number of epochs the model trains for before the learning rate decay begins
-        self.learning_rate_warmup_epochs = learning_rate_warmup_epochs
-        self.learning_rate_decay = learning_rate_decay
-        
-        # in a WGAN-GP, the critic trains for a number of steps and then generator trains for one step
-        self.num_critic_steps = critic_extra_steps
-        self.critic_input_shape = critic_input_shape
-        self.gp_weight = gp_weight
-        
-        # set dummy value for self.optimizer avoid errors at the end of .fit() call
-        self.optimizer = None
-        
-        # build the model to avoid errors when loading the model
-        self.build()
-        return
-    
-    def compile(self, critic_optimizer=None, gen_optimizer=None):
-        super(WGAN_GP, self).compile()
-        self.critic_optimizer = critic_optimizer
-        self.gen_optimizer = gen_optimizer
-        return
-    
-    def gradient_penalty(self, batch_size, real_images, fake_images, image_one_hot_labels):
-        alpha = tf.random.normal([batch_size, 1, 1, 1], 0.0, 1.0, dtype="float16")
-        real_images = tf.cast(real_images, dtype="float16")  # cast to float16 for mixed precision training
-        diff = fake_images - real_images
-        interpolated = real_images + alpha * diff
-        
-        with tf.GradientTape() as gp_tape:
-            gp_tape.watch(interpolated)
-            pred = self.critic(
-                [interpolated, image_one_hot_labels], training=True
-            )
-        
-        grads = gp_tape.gradient(pred, [interpolated])[0]
-        gradient_norms = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
-        gp = tf.reduce_mean((gradient_norms - 1.0) ** 2)
-        return gp, gradient_norms
-    
-    def train_step(self, batch_data):
-        # unpack the batch data into images and labels
-        real_images, real_labels = batch_data
-        # Get the batch size from the data as sometimes the last batch can be smaller
-        batch_size = tf.shape(real_images)[0]
-        
-        # For each batch, we are going to perform the
-        # following steps as laid out in the original paper:
-        # 1. Train the generator and get the generator loss
-        # 2. Train the critic and get the critic loss
-        # 3. Calculate the gradient penalty
-        # 4. Multiply this gradient penalty with a constant weight factor
-        # 5. Add the gradient penalty to the critic loss
-        # 6. Return the generator and critic losses as a loss dictionary
-        
-        # # Initialize lists to track training metrics
-        critic_real_scores = []
-        critic_fake_scores = []
-        gradient_penalties = []
-        critic_losses = []
-        mean_gradient_norms_list = []
-        
-        ####################################### Train the critic #######################################
-        for _ in range(self.num_critic_steps):
-            # Get a batch of random latent vectors
-            random_latent_vectors = tf.random.normal(shape=(batch_size, self.latent_dim))
-            
-            with tf.GradientTape() as tape:
-                # Generate fake images using the real labels for training the critic
-                fake_images = self.generator([random_latent_vectors, real_labels], training=True)
-                
-                # Get the critic scores (logits) for the fake and real images
-                fake_logits = self.critic([fake_images, real_labels], training=True)
-                real_logits = self.critic([real_images, real_labels], training=True)
-                
-                # Append the mean scores to track them
-                critic_real_scores.append(tf.reduce_mean(real_logits))
-                critic_fake_scores.append(tf.reduce_mean(fake_logits))
-                
-                # Calculate the critic loss
-                # critic_cost = self.critic_loss_fn(real_img=real_logits, fake_img=fake_logits)
-                # Calculate the critic loss using the Wasserstein loss
-                critic_wasserstein_loss = tf.reduce_mean(fake_logits) - tf.reduce_mean(real_logits)
-                
-                # Calculate the gradient penalty
-                gp, gradient_norms = self.gradient_penalty(batch_size, real_images, fake_images, real_labels)
-                
-                # Add the gradient penalty to the critic loss
-                critic_loss = critic_wasserstein_loss + gp * self.gp_weight
-                
-                # Append metrics to track them
-                gradient_penalties.append(gp)
-                critic_losses.append(critic_loss)
-                mean_gradient_norms_list.append(tf.reduce_mean(gradient_norms))
-            
-            # Get the gradients for the critic loss
-            critic_gradient = tape.gradient(critic_loss, self.critic.trainable_variables)
-            # Update the critic's weights
-            self.critic_optimizer.apply_gradients(zip(critic_gradient, self.critic.trainable_variables))
-            
-            # consider resampling the dataset to get a new batch of real images and labels here to avoid training on the same batch
-            #         multiple times. This could be achieved by making a copy of the dataset a class attribute.
-            # Example:
-            # real_images, real_labels = next(iter(self.train_dataset))
-        
-        ######################################### Train the generator #########################################
-        # Generate a new batch of random latent vectors
-        random_latent_vectors = tf.random.normal(shape=(batch_size, self.latent_dim))
-        
-        with tf.GradientTape() as tape:
-            # Generate fake images using real labels for training the generator
-            generated_images = self.generator([random_latent_vectors, real_labels], training=True)
-            
-            # Get the critic scores (logits) for the generated images
-            gen_img_logits = self.critic([generated_images, real_labels], training=True)
-            
-            # Calculate the generator loss
-            gen_loss = -tf.reduce_mean(gen_img_logits)
-        
-        # Get the gradients for the generator loss
-        gen_gradient = tape.gradient(gen_loss, self.generator.trainable_variables)
-        # Update the generator's weights
-        self.gen_optimizer.apply_gradients(zip(gen_gradient, self.generator.trainable_variables))
-        
-        # Calculate the average scores for real and fake images for this batch
-        avg_real_score = tf.reduce_mean(critic_real_scores)
-        avg_fake_score = tf.reduce_mean(critic_fake_scores)
-        avg_gradient_penalty = tf.reduce_mean(gradient_penalties)
-        avg_critic_loss = tf.reduce_mean(critic_losses)
-        mean_gradient_norms_list = tf.reduce_mean(mean_gradient_norms_list)
-        
-        return_dict = {
-            "critic_loss": avg_critic_loss,
-            "gen_loss": gen_loss,
-            "critic_loss_real": avg_real_score,
-            "critic_loss_fake": avg_fake_score,
-            "gradient_penalty": avg_gradient_penalty,
-            "mean_gradient_norms": mean_gradient_norms_list,
-            }
-        
-        return return_dict
-    
-    def build(self, input_shape=None):
-        # Explicitly build the generator and critic models
-        self.generator.build(input_shape=(None, self.latent_dim))
-        self.critic.build(input_shape=self.critic_input_shape)
-        super().build(input_shape)
-        return
-    
-    def get_config(self):
-        """
-        Custom saving step 1: get_config()
-        More info on custom loading and saving:
-        https://keras.io/guides/serialization_and_saving/
-        Runs as part of the saving process to serialize the model when calling model.save()
-        Runs first to get the default configuration for the model
-        """
-        # get the default configuration for the model
-        base_config = super().get_config()
-        
-        # get the custom configuration for the model
-        custom_config = {
-            "critic": keras.saving.serialize_keras_object(self.critic),
-            "generator": keras.saving.serialize_keras_object(self.generator),
-            "num_classes": self.num_classes,
-            "latent_dim": self.latent_dim,
-            "critic_extra_steps": self.num_critic_steps,
-            "gp_weight": self.gp_weight,
-            "learning_rate": self.learning_rate,
-            "learning_rate_warmup_epochs": self.learning_rate_warmup_epochs,
-            "learning_rate_decay": self.learning_rate_decay,
-        }
-        
-        # combine the two configurations
-        config = {**base_config, **custom_config}
-        return config
-    
-    def get_compile_config(self):
-        """
-        Custom saving step 2: get_compile_config()
-        More info on custom loading and saving:
-        https://keras.io/guides/customizing_saving_and_serialization/#getcompileconfig-and-compilefromconfig
-        Runs as part of the saving process to serialize the compiled parameters when calling model.save()
-        Runs after get_config() to serialize the compiled parameters
-        """
-        # These parameters will be serialized at saving time
-        config = {
-            "critic_optimizer": self.critic_optimizer.get_config(),
-            "critic_optimizer_state": [v.numpy() for v in self.critic_optimizer.variables],
-            "gen_optimizer": self.gen_optimizer.get_config(),
-            "gen_optimizer_state": [v.numpy() for v in self.gen_optimizer.variables],
-        }
-        return config
-    
-    @classmethod
-    def from_config(cls, config, custom_objects=None):
-        """
-        Custom loading step 1: from_config()
-        More info on custom loading and saving:
-        https://keras.io/guides/serialization_and_saving/
-        Runs as part of the loading process to deserialize the model when calling keras.models.load_model()
-        Runs first to deserialize the model configuration
-        """
-        # get the critic and generator models from the config
-        critic = keras.saving.deserialize_keras_object(config.pop("critic"), custom_objects=custom_objects)
-        generator = keras.saving.deserialize_keras_object(config.pop("generator"), custom_objects=custom_objects)
-        
-        # get the extra configurations for custom model attributes
-        num_classes = config.pop("num_classes")
-        latent_dim = config.pop("latent_dim")
-        learning_rate = config.pop("learning_rate")
-        learning_rate_warmup_epochs = config.pop("learning_rate_warmup_epochs")
-        learning_rate_decay = config.pop("learning_rate_decay")
-        critic_extra_steps = config.pop("critic_extra_steps")
-        gp_weight = config.pop("gp_weight")
-        
-        # create a new instance of the model with the critic and generator models (This calls the __init__ method)
-        model = cls(
-            critic=critic, 
-            generator=generator,
-            num_classes=num_classes,
-            latent_dim=latent_dim,
-            learning_rate=learning_rate,
-            learning_rate_warmup_epochs=learning_rate_warmup_epochs,
-            learning_rate_decay=learning_rate_decay,
-            critic_extra_steps=critic_extra_steps, 
-                    gp_weight=gp_weight)
-        return model
-    
-    def compile_from_config(self, config):
-        """
-        Custom loading step 2: compile_from_config()
-        More info on custom loading and saving:
-        https://keras.io/guides/customizing_saving_and_serialization/#getcompileconfig-and-compilefromconfig
-        Runs as part of the loading process to deserialize the compiled parameters when calling keras.models.load_model()
-        Runs after from_config() to deserialize the compiled parameters
-        """
-        # Deserialize the compiled parameters
-        self.critic_optimizer = keras.optimizers.Adam.from_config(config["critic_optimizer"])
-        self.critic_optimizer_state = config["critic_optimizer_state"]
-        for var, val in zip(self.critic_optimizer.variables, self.critic_optimizer_state):
-            var.assign(val)
-        
-        self.gen_optimizer = keras.optimizers.Adam.from_config(config["gen_optimizer"])
-        self.gen_optimizer_state = config["gen_optimizer_state"]
-        for var, val in zip(self.gen_optimizer.variables, self.gen_optimizer_state):
-            var.assign(val)
-        
-        # call the compile method to set the optimizer and loss functions
-        self.compile(
-            critic_optimizer=self.critic_optimizer, 
-            gen_optimizer=self.gen_optimizer,
-        )
-        return
 
 
 class Training_Monitor(tf.keras.callbacks.Callback):
@@ -325,11 +30,11 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         model_checkpoints_dir (str): Directory to save model checkpoints and info at each epoch.
         num_classes (int): Number of classes in the dataset.
         num_img (int): Number of images to generate at the end of each epoch.
-        latent_dim (int): Latent dimension of the generator.
+        noise_dim (int): noise dimension of the generator.
         grid_size (tuple): Size of the grid for the generated images.
         samples_per_epoch (int): Number of samples in the training dataset.
         last_checkpoint_dir_path (str, optional): Path to the last checkpoint directory if the model is being reloaded.
-        random_latent_vectors (tf.Tensor): Pre-generated random latent vectors for generating validation samples.
+        random_noise_vectors (tf.Tensor): Pre-generated random noise vectors for generating validation samples.
         metrics_dataframe (pd.DataFrame): DataFrame to track loss metrics.
         model_recently_loaded (bool): Flag to indicate if the model was recently loaded from a checkpoint.
         gif_creation_frequency (int): Frequency (in epochs) to create a GIF of validation samples.
@@ -352,16 +57,17 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def __init__(self,
                 model_training_output_dir,
                 model_checkpoints_dir,
-                latent_dim,
+                noise_dim,
                 samples_per_epoch=0,
-                gif_and_model_save_frequency=5,
+                model_save_frequency=5,
+                video_of_validation_frequency=5,
                 last_checkpoint_dir_path=None
                 ):
         """
         Parameters:
             model_training_output_dir: str, the main directory to save outputs from the model training
             model_checkpoints_dir: str, the directory to save the model checkpoints and info at each epoch
-            latent_dim: int, the latent dimension of the generator
+            noise_dim: int, the noise dimension of the generator
             grid_size: tuple, the size of the grid for the generated images
             samples_per_epoch: int, the number of samples in the training dataset
         """
@@ -378,13 +84,13 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.metric_calc_duration = datetime.now() - datetime.now()
         
         # generate static inputs for generating validation samples to see how the model is improving over time
-        self.latent_dim = latent_dim # latent dimension from the generator model
+        self.noise_dim = noise_dim # noise dimension from the generator model
         self.validation_sample_grid = (10, 15)  # rows, columns
         self.num_validation_samples = self.validation_sample_grid[0] * self.validation_sample_grid[1]
-        # deterministically generate the random latent vectors for generating validation samples so that the same random latent vectors are used
+        # deterministically generate the random noise vectors for generating validation samples so that the same random noise vectors are used
         # every time the model is reloaded and across different runs.
         generator = tf.random.Generator.from_seed(112)
-        self.random_latent_vectors = generator.normal(shape=(self.validation_sample_grid[0] * self.validation_sample_grid[1], self.latent_dim))
+        self.random_noise_vectors = generator.normal(shape=(self.validation_sample_grid[0] * self.validation_sample_grid[1], self.noise_dim))
         # generate sample labels for MNIST (0-9)
         self.validation_sample_labels = []
         for MNIST_label in range(self.validation_sample_grid[0]):  # loop through the number of labels
@@ -393,8 +99,9 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # convert the list of labels to a tensor
         self.validation_sample_labels = tf.convert_to_tensor(self.validation_sample_labels, dtype=tf.int32)
         
-        # frequency (in epochs) to create a GIF of validation samples and save the model
-        self.gif_and_model_save_frequency = gif_and_model_save_frequency
+        # frequency (in epochs) to save the model and create a video of the validation samples
+        self.model_save_frequency = model_save_frequency
+        self.video_of_validation_frequency = video_of_validation_frequency
         
         # counter to track the number of samples the model has been trained on so far (not including the extra steps for the critic)
         self.samples_per_epoch = samples_per_epoch
@@ -418,6 +125,18 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 file.write(f"{'='*140}\n")
                 file.write(f"{' '*43}A place to write notes about this model training run.\n")
                 file.write(f"{'='*140}\n\n")
+        return
+    
+    def on_train_begin(self, logs=None):
+        """
+        Called at the start of model training.
+        Parameters:
+            logs (dict, optional): Dictionary of logs containing loss metrics.
+        Returns:
+            None
+        """
+        # print out a message to the console to indicate that the training has started
+        print(f"\n{'#'*63} MODEL TRAINING STARTED {'#'*63}")
         return
     
     def on_epoch_begin(self, epoch, logs=None):
@@ -472,15 +191,15 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # Generate validation samples
         self.generate_validation_samples()
         
-        # TODO: uncomment theses lines when done with testing
-        # # every X number of epochs, generate a GIF of all the saved images and save the model
-        # if self.current_epoch % self.gif_and_model_save_frequency == 0 and epoch > 0:
-        #     # TODO: come up with a better strategy for visualizing training as this does not scale well a large number of epochs.
-        #     # it will eventually cause a huge time sink as the number of epochs increases, the gifs won't open because they are too large
-        #     # and it will end with a MemoryError because the gifs are too large to load into memory?
-        #     self.generate_gif()
-        #     # Save a copy of the model to the current epoch checkpoint directory
-        #     self.save_model_checkpoint()
+        # save the model at regular intervals
+        if self.current_epoch % self.model_save_frequency == 0:
+            # Save a copy of the model to the current epoch checkpoint directory
+            self.save_model_checkpoint()
+        
+        # visualize the training progress with a video of the validation samples at regular intervals
+        if self.current_epoch > 1 and self.current_epoch % self.video_of_validation_frequency == 0:
+            # Generate a video of all the saved images
+            self.generate_video_of_validation_samples()
         
         # Calculate the duration of logging the metrics (will be logged in the next epoch log_data_to_dataframe call)
         self.metric_calc_duration = datetime.now() - self.metric_calc_start_time
@@ -491,13 +210,18 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         return
     
     def on_train_end(self, logs=None):
-        self.save_model_checkpoint()
-        # epoch = len(self.metrics_dataframe)
-        # # skip generating a gif if training ends on a multiple of the frequency to create a gif because it was already generated in the 
-        # # generate_validation_samples method at the end of the last epoch.
-        # if epoch % self.gif_and_model_save_frequency != 0:
-        #     # Generate a GIF of all the saved images
-        #     self.generate_gif()
+        # if we haven't saved a model checkpoint at the end of the last epoch, save one now
+        if self.current_epoch % self.model_save_frequency != 0:
+            # Save a copy of the model to the current epoch checkpoint directory
+            self.save_model_checkpoint()
+        
+        # if we haven't generated a video of the validation samples at the end of the last epoch, generate one now
+        if self.current_epoch > 1 and self.current_epoch % self.video_of_validation_frequency != 0:
+            # Generate a video of all the saved images
+            self.generate_video_of_validation_samples()
+        
+        # print out a message to the console to indicate that the training has ended
+        print(f"{'#'*64} MODEL TRAINING ENDED {'#'*64}\n")
         return
     
     def update_current_epoch(self):
@@ -539,7 +263,6 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         critic_loss_real = float(logs["critic_loss_real"])
         critic_loss_fake = float(logs["critic_loss_fake"])
         gradient_penalty = float(logs["gradient_penalty"])
-        mean_gradient_norms = float(logs["mean_gradient_norms"])
         gen_loss = float(logs["gen_loss"])
         
         # get the current memory usage in MB and GB
@@ -550,8 +273,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # get the critic and generator learning rates. Updated in the learning_rate_scheduler method. In the current implementation, the values
         # are the same so we will get the learning rate from the model object to avoid floating point rounding errors that slightly change the
         # values when extracting from self.model.critic_optimizer.learning_rate.numpy() and self.model.gen_optimizer.learning_rate.numpy()
-        critic_learning_rate = self.model.learning_rate
-        generator_learning_rate = self.model.learning_rate
+        critic_learning_rate = self.model.critic_learning_rate
+        generator_learning_rate = self.model.generator_learning_rate
         
         # Get the current time in the US Central Time Zone
         formatted_timestamp = get_timestamp()
@@ -563,7 +286,6 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             "critic_loss_real": critic_loss_real,
             "critic_loss_fake": critic_loss_fake,
             "gradient_penalty": gradient_penalty,
-            "mean_gradient_norms": mean_gradient_norms,
             "gen_loss": gen_loss,
             # calculate the number of samples trained on at the end of this epoch
             "samples_trained_on": self.current_epoch * self.samples_per_epoch,
@@ -597,8 +319,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         the number of samples trained on.
         """
         # Define list of individual loss columns to plot
-        plot_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gen_loss", "gradient_penalty", "mean_gradient_norms"]
-        plot_line_colors = ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B"]
+        plot_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gen_loss", "gradient_penalty"]
+        plot_line_colors = ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD"]
         
         # Identify locations where model was loaded
         model_load_indices = self.metrics_dataframe.loc[self.metrics_dataframe['model_loaded'], 'epoch']
@@ -645,7 +367,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             
             # Save plot to the current epoch checkpoint directory
             plot_path = self.this_epoch_checkpoint_dir.joinpath(f"{col_for_filename}.png")
-            plt.savefig(plot_path, dpi=200)
+            plt.savefig(plot_path, dpi=100)
             shutil.copy(plot_path, self.model_training_output_dir.joinpath(f"{col_for_filename}.png"))
             plt.close()
             plt.clf()
@@ -684,12 +406,47 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         # Save the combined plot to the current epoch checkpoint directory
         combined_plot_path = self.this_epoch_checkpoint_dir.joinpath("losses_combined.png")
-        plt.savefig(combined_plot_path, dpi=200)
+        plt.savefig(combined_plot_path, dpi=100)
         combined_plot_main_dir_path = self.model_training_output_dir.joinpath("losses_combined.png")
         shutil.copy(combined_plot_path, combined_plot_main_dir_path)
         plt.close()
         plt.clf()
         print(f"\nCombined loss plot saved to: {combined_plot_main_dir_path}")
+        ############################################## critic loss real vs fake #############################################
+        # Create a plot for the difference of the critic loss on real and fake samples
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        
+        ax1.plot(epochs, self.metrics_dataframe["critic_loss_real"] - self.metrics_dataframe["critic_loss_fake"], 
+                label="Critic Loss Real - Fake", zorder=1, color=plot_line_colors[0])
+        ax1.set_ylabel("Critic Loss Real - Fake")
+        ax1.set_xlabel("Epoch")
+        ax1.legend()
+        ax1.grid(True, alpha=0.4)
+        
+        # Add vertical lines for model loading events with a single label for legend
+        for i, model_load_epoch in enumerate(model_load_indices):
+            if i == 0:
+                line_label = "ckpt loaded"
+            else:
+                line_label = ""
+            ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
+            # add text to show the number of samples at this checkpoint
+            y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
+            ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
+                    zorder=2)
+        
+        # add text to the plot to show the number of samples trained on at the end of the last epoch
+        plt.text(0.86, 1.028, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
+                        transform=plt.gca().transAxes)
+        
+        plt.title("Critic Loss Real - Fake vs. Epoch", fontsize=18, pad=10)
+        
+        plt.tight_layout()
+        plot_path = self.this_epoch_checkpoint_dir.joinpath("loss_critic_real_fake_diff.png")
+        plt.savefig(plot_path, dpi=100)
+        shutil.copy(plot_path, self.model_training_output_dir.joinpath("loss_critic_real_fake_diff.png"))
+        plt.close()
+        plt.clf()
         
         ################################ Stacked plots for critic and generator learning rates ###############################
         loss_columns = ["critic_loss", "gen_loss"]
@@ -740,7 +497,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             
             # Save the plot to the current epoch checkpoint directory
             plot_path = self.this_epoch_checkpoint_dir.joinpath(f"{filename}.png")
-            plt.savefig(plot_path, dpi=200)
+            plt.savefig(plot_path, dpi=100)
             shutil.copy(plot_path, self.model_training_output_dir.joinpath(f"{filename}.png"))
             plt.close()
             plt.clf()
@@ -775,7 +532,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         # Save the memory usage plot to the model training output directory
         memory_plot_path = self.model_training_output_dir.joinpath("memory_usage.png")
-        plt.savefig(memory_plot_path, dpi=200)
+        plt.savefig(memory_plot_path, dpi=100)
         plt.close()
         plt.clf()
         
@@ -808,7 +565,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         # Save the GPU memory usage plot to the model training output directory
         plot_path = self.model_training_output_dir.joinpath("memory_usage_GPU.png")
-        plt.savefig(plot_path, dpi=200)
+        plt.savefig(plot_path, dpi=100)
         plt.close()
         plt.clf()
         return
@@ -816,10 +573,21 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def learning_rate_scheduler(self):
         # if we have passed the warmup period, start to decay the learning rates
         if self.current_epoch > self.model.learning_rate_warmup_epochs:
-            self.model.learning_rate = self.model.learning_rate * self.model.learning_rate_decay
-
-            self.model.critic_optimizer.learning_rate = self.model.learning_rate
-            self.model.gen_optimizer.learning_rate = self.model.learning_rate
+            # decay the learning rates by the learning_rate_decay factor using wgan-gp attributes so that we don't run into errors with floating
+            # point rounding errors that slightly change the values when extracting from self.model.critic_optimizer.learning_rate.numpy() and
+            # self.model.gen_optimizer.learning_rate.numpy().
+            self.model.critic_learning_rate = self.model.critic_learning_rate * self.model.learning_rate_decay
+            self.model.generator_learning_rate = self.model.generator_learning_rate * self.model.learning_rate_decay
+            
+            # if the learning rate is less than the minimum learning rate, set it to the minimum learning rate
+            if self.model.critic_learning_rate < self.model.min_critic_learning_rate:
+                self.model.critic_learning_rate = self.model.min_critic_learning_rate
+            if self.model.generator_learning_rate < self.model.min_generator_learning_rate:
+                self.model.generator_learning_rate = self.model.min_generator_learning_rate
+            
+            # update the learning rates of the optimizers
+            self.model.critic_optimizer.learning_rate = self.model.critic_learning_rate
+            self.model.gen_optimizer.learning_rate = self.model.generator_learning_rate
         return
     
     def save_model_checkpoint(self):
@@ -843,7 +611,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             None
         """
         # Generate a set of images (number is determined by num_img defined in the initializer)
-        generated_images = self.model.generator([self.random_latent_vectors, self.validation_sample_labels], training=False)
+        generated_images = self.model.generator([self.random_noise_vectors, self.validation_sample_labels], training=False)
         # Rescale the images from [-1, 1] to [0, 255]
         generated_images = (generated_images * 127.5) + 127.5
         # transformed generated images from the current shape [100, 28, 28, 1], to [10, 10, 28, 28, 1] for easier plotting (hardcoded for MNIST)
@@ -892,7 +660,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         # Save the grid of images to the current epoch checkpoint directory
         fig_save_path = self.this_epoch_checkpoint_dir.joinpath(f"validation_samples.png")
-        plt.savefig(fig_save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(fig_save_path, dpi=150, bbox_inches='tight')
         # copy the plot to the model_training_output_dir for easy access to the most recent plot
         fig_copy_path = self.model_training_output_dir.joinpath(f"validation_samples.png")
         shutil.copy(fig_save_path, fig_copy_path)
@@ -904,13 +672,10 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         print(f"Validation samples saved to: {fig_copy_path}")
         return
     
-    def generate_gif(self):
+    def generate_video_of_validation_samples(self):
         """
-        Creates a GIF of the validation images generated at the end of each epoch
-        without loading all images into memory at once.
+        Creates a video of the validation images generated at the end of each epoch
         """
-        print("Generating GIF of validation samples...")
-        
         # Get a sorted list of all validation_samples.png paths
         validation_samples_paths = sorted(
             self.model_checkpoints_dir.glob("epoch_*/validation_samples.png"),
@@ -921,28 +686,39 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             print("No validation samples found. Skipping GIF generation.")
             return
         
-        # Use PIL to handle GIF creation incrementally
-        gif_save_path = self.model_training_output_dir.joinpath("validation_samples.gif")
+        # Read the first image to get its dimensions
+        first_image = cv2.imread(validation_samples_paths[0])
+        original_height, original_width, _ = first_image.shape
         
-        with Image.open(validation_samples_paths[0]) as first_frame:
-            # Convert the first frame to RGB (if not already)
-            first_frame = first_frame.convert("RGB")
-            # Save the GIF incrementally by appending each frame
-            first_frame.save(
-                gif_save_path,
-                save_all=True,
-                append_images=[
-                    Image.open(file_path).convert("RGB") for file_path in validation_samples_paths[1:]
-                ],
-                duration=125,  # duration in milliseconds (adjust fps as needed)
-                loop=0  # loop forever
-            )
+        # Set the resizing dimensions (e.g., scale down to 75% of original size)
+        resize_factor = 0.50
+        resized_width = int(original_width * resize_factor)
+        resized_height = int(original_height * resize_factor)
         
-        # copy the generated gif to the current epoch checkpoint directory
-        gif_copy_path = self.this_epoch_checkpoint_dir.joinpath("validation_samples.gif")
-        shutil.copy(gif_save_path, gif_copy_path)
+        # Define the codec and create a VideoWriter object
+        video_save_path = self.this_epoch_checkpoint_dir.joinpath("validation_samples.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for mp4
+        video = cv2.VideoWriter(video_save_path, fourcc, 10, (resized_width, resized_height))  # 10 FPS
         
-        print(f"GIF saved to {gif_save_path}")
+        # Loop through all validation sample images and add them to the video
+        for image_path in validation_samples_paths:
+            frame = cv2.imread(image_path)
+            if frame is not None:
+                # Resize the frame
+                resized_frame = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+                video.write(resized_frame)
+                video.write(resized_frame)  # Duplicate frame to increase duration
+            else:
+                print(f"Warning: Unable to read image {image_path}")
+        
+        # Release the video writer
+        video.release()
+        
+        # copy the generated video to the current epoch checkpoint directory
+        video_copy_path = self.model_training_output_dir.joinpath("validation_samples.mp4")
+        shutil.copy(video_save_path, video_copy_path)
+        
+        print(f"Video of validation samples across epochs saved to: {video_copy_path}")
         return
     
     def plot_epoch_duration_and_estimate_train_time(self):
@@ -999,7 +775,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         filename = f"time_breakdown_across_epochs.png"
         plot_path = self.model_training_output_dir.joinpath(filename)
-        plt.savefig(plot_path, dpi=200)
+        plt.savefig(plot_path, dpi=100)
         plt.close()
         plt.clf()
         
