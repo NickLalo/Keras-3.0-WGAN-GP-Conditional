@@ -76,7 +76,7 @@ def parse_arguments():
     parser.add_argument("--batch_size", type=int, default=512,
         help="The batch size for training the model.")
     # epochs
-    parser.add_argument("--epochs", type=int, default=1000,
+    parser.add_argument("--epochs", type=int, default=600,
         help="The number of epochs to train the model on the current run. On reload, the model will train this many more epochs.")
     # critic_to_generator_training_ratio
     parser.add_argument("--critic_to_generator_training_ratio", type=int, default=5,
@@ -103,13 +103,16 @@ def parse_arguments():
     parser.add_argument("--min_generator_learning_rate", type=float, default=3.75e-5,
         help="The minimum learning rate for the generator.")
     
-    ######################################################### model and video save frequency #########################################################
+    ##################################################### model, video, and FID score frequency ######################################################
     # model_save_frequency
     parser.add_argument("--model_save_frequency", type=int, default=10,
         help="The frequency of saving the model.")
     # video_of_validation_frequency
     parser.add_argument("--video_of_validation_frequency", type=int, default=1,
         help="The frequency of creating a video of the validation samples.")
+    # FID_score_frequency
+    parser.add_argument("--FID_score_frequency", type=int, default=0,
+        help="The frequency of calculating the FID score. Defaults to 0 (no FID score calculation) because it is computationally expensive.")
     
     ############################################################### validate arguments ###############################################################
     # Parse arguments
@@ -462,7 +465,7 @@ def print_script_execution_time(script_start_time):
     time_hours = int((script_end_time - script_start_time) // 3600)
     time_minutes = int(((script_end_time - script_start_time) % 3600) // 60)
     time_seconds = int(((script_end_time - script_start_time) % 3600) % 60)
-    print(f"\nTotal execution time: {time_hours:02d}:{time_minutes:02d}:{time_seconds:02d}\n")
+    print(f"\nTotal execution time: {time_hours:02d}:{time_minutes:02d}:{time_seconds:05.2f}\n")
     return
 
 

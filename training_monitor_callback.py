@@ -31,6 +31,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         samples_per_epoch: int, the number of samples in the training dataset
         model_save_frequency: int, the frequency (in epochs) to save the model
         video_of_validation_frequency: int, the frequency (in epochs) to generate a video of the validation samples
+        FID_score_frequency: int, the frequency (in epochs) to calculate the FID score between the real and generated images
         last_checkpoint_dir_path: str, the path to the last checkpoint directory if the model is being reloaded
     
     Methods:
@@ -57,6 +58,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 samples_per_epoch=0,
                 model_save_frequency=5,
                 video_of_validation_frequency=5,
+                FID_score_frequency=0,
                 last_checkpoint_dir_path=None
                 ):
         self.model_training_output_dir = model_training_output_dir
@@ -87,9 +89,10 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # convert the list of labels to a tensor
         self.validation_sample_labels = tf.convert_to_tensor(self.validation_sample_labels, dtype=tf.int32)
         
-        # frequency (in epochs) to save the model and create a video of the validation samples
+        # frequency (in epochs) to save the model, create a video of the validation samples, and calculate the FID score
         self.model_save_frequency = model_save_frequency
         self.video_of_validation_frequency = video_of_validation_frequency
+        self.FID_score_frequency = FID_score_frequency
         
         # counter to track the number of samples the model has been trained on so far (not including the extra steps for the critic)
         self.samples_per_epoch = samples_per_epoch
@@ -188,15 +191,21 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # Generate validation samples
         self.generate_validation_samples()
         
-        # save the model at regular intervals
-        if self.current_epoch % self.model_save_frequency == 0:
+        # save the model at regular intervals (if the model_save_frequency is greater than 0)
+        if self.model_save_frequency > 0 and self.current_epoch % self.model_save_frequency == 0:
             # Save a copy of the model to the current epoch checkpoint directory
             self.save_model_checkpoint()
         
-        # visualize the training progress with a video of the validation samples at regular intervals
-        if self.current_epoch > 1 and self.current_epoch % self.video_of_validation_frequency == 0:
+        # visualize the training progress with a video of the validation samples at regular intervals (if the video_of_validation_frequency is
+        # greater than 0)
+        if self.video_of_validation_frequency > 0 and self.current_epoch > 1 and self.current_epoch % self.video_of_validation_frequency == 0:
             # Generate a video of all the saved images
             self.generate_video_of_validation_samples()
+        
+        # if calculate the FID score between the real and generated images at regular intervals (if the FID_score_frequency is greater than 0)
+        if self.FID_score_frequency > 0 and self.current_epoch % self.FID_score_frequency == 0:
+            # calculate the FID score between the real and generated images
+            self.calculate_FID_score()
         
         # Calculate the duration of logging the metrics (will be logged in the next epoch log_data_to_dataframe call)
         self.metric_calc_duration = datetime.now() - self.metric_calc_start_time
@@ -207,13 +216,15 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         return
     
     def on_train_end(self, logs=None):
-        # if we haven't saved a model checkpoint at the end of the last epoch, save one now
-        if self.current_epoch % self.model_save_frequency != 0:
+        # if we haven't saved a model checkpoint at the end of the last epoch, save one now.  model_save_frequency of zero means no model has been
+        # saved up to this point so we need to save one now.
+        if self.model_save_frequency == 0 or self.current_epoch % self.model_save_frequency != 0:
             # Save a copy of the model to the current epoch checkpoint directory
             self.save_model_checkpoint()
         
-        # if we haven't generated a video of the validation samples at the end of the last epoch, generate one now
-        if self.current_epoch > 1 and self.current_epoch % self.video_of_validation_frequency != 0:
+        # if we haven't generated a video of the validation samples at the end of the last epoch, generate one now. video_of_validation_frequency
+        # of zero means no video has been generated up to this point so we need to generate one now.
+        if self.video_of_validation_frequency == 0 or (self.current_epoch > 1 and self.current_epoch % self.video_of_validation_frequency != 0):
             # Generate a video of all the saved images
             self.generate_video_of_validation_samples()
         
@@ -295,6 +306,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             "epoch_train_time": self.epoch_train_duration.total_seconds(),
             "metric_calc_time": 0.0,  # placeholder value that will be replaced in plot_epoch_duration_and_estimate_train_time
             "total_iteration_time": 0.0,  # placeholder value that will be replaced in plot_epoch_duration_and_estimate_train_time
+            "FID_score": 0.0  # placeholder value that will be replaced if the FID score is calculated
         }])
         
         # if the model was loaded, set the model_loaded column to False for the next epoch
@@ -444,12 +456,12 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         # Add text annotation for the minimum line
         y_text_position_min = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
-        ax1.text(min_diff_epoch + 0.01, y_text_position_min, f"  Min diff at Epoch {min_diff_epoch:,}", color='black', fontsize=9, rotation=90, va='bottom', 
-                ha='left',zorder=2)
+        ax1.text(min_diff_epoch + 0.01, y_text_position_min, f"  Min diff at Epoch {min_diff_epoch:,}", color='black', fontsize=9, rotation=90, 
+                va='bottom', ha='left',zorder=2)
         
         # add text to the plot to show the number of samples trained on at the end of the last epoch
         plt.text(0.86, 1.028, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
-                        transform=plt.gca().transAxes)
+                transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
         ax1.set_ylabel("Critic Loss Real - Fake")
@@ -737,6 +749,14 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         print(f"Video of validation samples across epochs saved to: {video_copy_path}")
         return
     
+    def calculate_fid_score(self):
+        """
+        method to estimate the FID score of the generated images compared to the real images, log the score to the metrics dataframe, and create a
+        plot of the FID score across epochs highlighting the minimum FID score. This can be a time-consuming process but give a good estimate of the
+        quality of the generated images.
+        """
+        return
+    
     def plot_epoch_duration_and_estimate_train_time(self):
         """
         method to estimate the time to train for a number of epochs based on the average time spent training
@@ -753,34 +773,13 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.metrics_dataframe.to_csv(csv_save_path, index=False)
         
         ######################################### create plots for training and metric calculation durations #########################################
-        # Identify locations where model was loaded
-        model_load_indices = self.metrics_dataframe.loc[self.metrics_dataframe['model_loaded'], 'epoch']
-        
-        # get the number of samples trained and epochs for the x-axis
-        samples_trained = self.metrics_dataframe['samples_trained_on']
-        epochs = self.metrics_dataframe['epoch']
-        
-        fig, ax1 = plt.subplots(figsize=(10, 6))
         # Plot the time metric starting after the first epoch
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        epochs = self.metrics_dataframe['epoch']
         ax1.bar(epochs[:], self.metrics_dataframe["epoch_train_time"], label="epoch_train_time".replace("_", " ").title(), zorder=1, 
                 color='#3B9DE3', edgecolor='black')
         ax1.bar(epochs[:], self.metrics_dataframe["metric_calc_time"], label="metric_calc_time".replace("_", " ").title(), zorder=1,
                 color='#AE7E6F', edgecolor='black', bottom=self.metrics_dataframe["epoch_train_time"])
-        
-        for i, model_load_epoch in enumerate(model_load_indices):
-            if i == 0:
-                line_label = "ckpt loaded"
-            else:
-                line_label = ""
-            ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=2)
-            # add text to show the epoch after the model was loaded
-            y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
-            ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
-                    zorder=2)
-        
-        # add text to the plot to show the number of samples trained on at the end of the last epoch
-        plt.text(0.86, 1.012, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
-                transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
         ax1.set_ylabel("Duration (s)")
@@ -795,7 +794,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         plt.close()
         plt.clf()
         
-        # if this is the first epoch, skip estimating the time to train to specific epochs because we don't have enough data.
+        # if this is the first epoch, skip estimating the time to train to specific epochs because we don't have enough data and the first epoch
+        # often takes longer due to some first epoch setup time.
         if self.current_epoch == 1:
             return
         

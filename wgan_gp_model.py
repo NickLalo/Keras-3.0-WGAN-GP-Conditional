@@ -320,7 +320,7 @@ class WGAN_GP(keras.Model):
         
         # create a new instance of the model with the critic and generator models (This calls the __init__ method)
         model = cls(
-            critic=critic, 
+            critic=critic,
             generator=generator,
             latent_dim=latent_dim,
             critic_learning_rate=critic_learning_rate,
@@ -329,7 +329,7 @@ class WGAN_GP(keras.Model):
             learning_rate_decay=learning_rate_decay,
             min_critic_learning_rate=min_critic_learning_rate,
             min_generator_learning_rate=min_generator_learning_rate,
-            critic_extra_steps=critic_extra_steps, 
+            critic_extra_steps=critic_extra_steps,
                     gp_weight=gp_weight)
         return model
     

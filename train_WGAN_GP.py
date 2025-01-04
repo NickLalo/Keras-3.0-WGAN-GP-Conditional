@@ -212,6 +212,7 @@ if __name__ == "__main__":
         samples_per_epoch=samples_per_epoch,
         model_save_frequency=training_params["model_save_frequency"],
         video_of_validation_frequency=training_params["video_of_validation_frequency"],
+        FID_score_frequency=training_params["FID_score_frequency"],
         last_checkpoint_dir_path=last_checkpoint_dir_path
         )
     
