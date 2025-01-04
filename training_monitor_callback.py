@@ -8,14 +8,12 @@ import os
 import time
 from datetime import datetime
 import shutil
-from tqdm import tqdm
 import pandas as pd
 import cv2
 import tensorflow as tf
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use("Agg")  # set to use the "Agg" to avoid tkinter error
-from PIL import Image
 
 from utils import get_memory_usage, get_gpu_memory_usage, get_timestamp, get_readable_time_string
 
@@ -23,36 +21,34 @@ from utils import get_memory_usage, get_gpu_memory_usage, get_timestamp, get_rea
 class Training_Monitor(tf.keras.callbacks.Callback):
     """
     Training_Monitor is a custom Keras callback for monitoring and logging the training process of a GAN model. It performs various tasks at the end
-    of each epoch, including logging loss metrics, saving model checkpoints, generating validation samples, and creating plots and GIFs of the 
+    of each epoch, including logging loss metrics, saving model checkpoints, generating validation samples, and creating plots and videos of the 
     training progress.
-    Attributes:
-        model_training_output_dir (str): Directory to save outputs from the model training.
-        model_checkpoints_dir (str): Directory to save model checkpoints and info at each epoch.
-        num_classes (int): Number of classes in the dataset.
-        num_img (int): Number of images to generate at the end of each epoch.
-        noise_dim (int): noise dimension of the generator.
-        grid_size (tuple): Size of the grid for the generated images.
-        samples_per_epoch (int): Number of samples in the training dataset.
-        last_checkpoint_dir_path (str, optional): Path to the last checkpoint directory if the model is being reloaded.
-        random_noise_vectors (tf.Tensor): Pre-generated random noise vectors for generating validation samples.
-        metrics_dataframe (pd.DataFrame): DataFrame to track loss metrics.
-        model_recently_loaded (bool): Flag to indicate if the model was recently loaded from a checkpoint.
-        gif_creation_frequency (int): Frequency (in epochs) to create a GIF of validation samples.
+    
+    Parameters to __init__:
+        model_training_output_dir: str, the main directory to save outputs from the model training
+        model_checkpoints_dir: str, the directory to save the model checkpoints and info at each epoch
+        noise_dim: int, the noise dimension of the generator
+        samples_per_epoch: int, the number of samples in the training dataset
+        model_save_frequency: int, the frequency (in epochs) to save the model
+        video_of_validation_frequency: int, the frequency (in epochs) to generate a video of the validation samples
+        last_checkpoint_dir_path: str, the path to the last checkpoint directory if the model is being reloaded
+    
     Methods:
-        on_epoch_end(epoch, logs=None):
-            Called at the end of each epoch during training. Logs loss metrics, saves model checkpoints, generates validation samples, and creates 
-            plots.
-        on_train_end(logs=None):
-            Called at the end of training. Generates a GIF of all saved validation samples.
-        set_this_epoch_checkpoint_dir():
-            Sets the directory for the current epoch's checkpoint and creates it if it doesn't exist.
-        log_loss_to_dataframe(logs):
-        create_loss_plots():
-            Generates and saves individual and combined loss plots for the training process.
-        generate_validation_samples():
-            Generates a set of validation images using the generator model and saves them as a grid.
-        generate_gif():
-            Creates a GIF of the validation images generated at regular intervals.
+        __init__: Initializes the Training_Monitor object
+        on_train_begin: Called at the start of model training to print a message to the console
+        on_epoch_begin: Called at the start of each epoch during training to get the start time of the epoch
+        on_epoch_end: Called at the end of each epoch during training to perform various tasks (Main method of the class)
+        on_train_end: Called at the end of model training to print a message to the console and save the final model checkpoint
+        update_current_epoch: Updates the current epoch number for logging metrics
+        set_this_epoch_checkpoint_dir: Creates a new checkpoint directory for logging info at the end of this epoch
+        log_data_to_dataframe: Logs the loss metrics to a DataFrame and saves it to a CSV file
+        plot_training_metrics: Generates and saves individual and combined loss plots for the training process
+        learning_rate_scheduler: Decays the learning rates of the critic and generator models after the warmup period
+        save_model_checkpoint: Saves a copy of the model to the current epoch checkpoint directory
+        generate_validation_samples: Generates and saves a grid of validation images produced by the generator model
+        generate_video_of_validation_samples: Generates a video of all saved validation images
+        plot_epoch_duration_and_estimate_train_time: Plots the duration of the epoch and metric calculations and estimates the time to train for a
+            number of epochs
     """
     def __init__(self,
                 model_training_output_dir,
@@ -63,14 +59,6 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 video_of_validation_frequency=5,
                 last_checkpoint_dir_path=None
                 ):
-        """
-        Parameters:
-            model_training_output_dir: str, the main directory to save outputs from the model training
-            model_checkpoints_dir: str, the directory to save the model checkpoints and info at each epoch
-            noise_dim: int, the noise dimension of the generator
-            grid_size: tuple, the size of the grid for the generated images
-            samples_per_epoch: int, the number of samples in the training dataset
-        """
         self.model_training_output_dir = model_training_output_dir
         self.model_checkpoints_dir = model_checkpoints_dir
         self.this_epoch_checkpoint_dir = None  # the path to the current model checkpoint (will be set/updated in on_epoch_end)
@@ -155,16 +143,25 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         """
         Called at the end of each epoch during training.
+        
+        This method performs the following tasks:
+            1. Get the duration of the time spent training this epoch.
+            2. Start the timer for calculating the duration of logging metrics.
+            3. Get the current epoch number for logging metrics.
+            4. Set the current epoch checkpoint directory.
+            5. Log the data about training to the DataFrame.
+            6. Plot tracked metrics.
+            7. Update the learning rates of the optimizers if past the warmup period.
+            8. Generate validation samples.
+            9. Save the model at regular intervals.
+            10. Visualize the training progress with a video of the validation samples at regular intervals.
+            11. Calculate the duration of logging the metrics.
+            12. Plot train time and metrics calculations and estimate the time to train for a number of epochs.
+        
         Parameters:
             epoch (int): The current epoch number.
             logs (dict, optional): Dictionary of logs containing loss metrics.
-            This method performs the following tasks:
-            1. Logs the loss metrics to a DataFrame.
-            2. Plots individual loss metrics and saves the plots to the specified directory.
-            3. Creates a combined plot for specific losses and saves it.
-            4. Generates a set of validation images using the generator model.
-            7. Every X epochs, generates a GIF of all saved images.
-            8. Saves a copy of the model to the current epoch checkpoint directory.
+        
         Returns:
             None
         """
@@ -329,7 +326,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         samples_trained = self.metrics_dataframe['samples_trained_on']
         epochs = self.metrics_dataframe['epoch']
         
-        ################################ Loop through each loss metric to create individual plots ###############################
+        ########################################## Loop through each loss metric to create individual plots ##########################################
         for color_index, col in enumerate(plot_columns):
             # Create the plot
             fig, ax1 = plt.subplots(figsize=(10, 6))
@@ -345,7 +342,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 else:
                     line_label = ""
                 ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
-                # add text to show the number of samples at this checkpoint
+                # add text to show the epoch after the model was loaded
                 y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
                 ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', 
                         ha='right', zorder=2)
@@ -372,7 +369,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             plt.close()
             plt.clf()
         
-        ################################ Combined plot for specific losses ###############################
+        ##################################################### Combined plot for specific losses ######################################################
         combined_loss_columns = ["critic_loss", "critic_loss_real", "critic_loss_fake", "gen_loss", "gradient_penalty"]
         fig, ax1 = plt.subplots(figsize=(10, 6))
         
@@ -388,7 +385,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
-            # add text to show the number of samples at this checkpoint
+            # add text to show the epoch after the model was loaded
             y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
             ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
                     zorder=2)
@@ -412,16 +409,16 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         plt.close()
         plt.clf()
         print(f"\nCombined loss plot saved to: {combined_plot_main_dir_path}")
-        ############################################## critic loss real vs fake #############################################
+        
+        ########################################################## critic loss real vs fake ##########################################################
         # Create a plot for the difference of the critic loss on real and fake samples
         fig, ax1 = plt.subplots(figsize=(10, 6))
         
-        ax1.plot(epochs, self.metrics_dataframe["critic_loss_real"] - self.metrics_dataframe["critic_loss_fake"], 
-                label="Critic Loss Real - Fake", zorder=1, color=plot_line_colors[0])
-        ax1.set_ylabel("Critic Loss Real - Fake")
-        ax1.set_xlabel("Epoch")
-        ax1.legend()
-        ax1.grid(True, alpha=0.4)
+        # Calculate the difference between critic_loss_real and critic_loss_fake
+        diff_data = self.metrics_dataframe["critic_loss_real"] - self.metrics_dataframe["critic_loss_fake"]
+        
+        # Plot the diff data
+        ax1.plot(epochs, diff_data, label="Critic Loss Real - Fake", zorder=1, color=plot_line_colors[0])
         
         # Add vertical lines for model loading events with a single label for legend
         for i, model_load_epoch in enumerate(model_load_indices):
@@ -430,25 +427,43 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
-            # add text to show the number of samples at this checkpoint
+            # add text to show the epoch after the model was loaded
             y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
             ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
                     zorder=2)
+        
+        # find the epoch where the minimum value occurred
+        min_diff_epoch = diff_data.idxmin() + 1  # +1 because the index starts from 0 and epoch starts from 1
+        # if the minimum difference is in the first 10 epochs, find the minimum difference after the first 10 epochs
+        if min_diff_epoch < 10 and len(diff_data) > 10:
+            diff_data_after_5 = diff_data[10:]
+            min_diff_epoch = diff_data_after_5.idxmin() + 1
+        
+        # Plot a vertical line at the epoch with the minimum critic loss difference
+        ax1.axvline(x=min_diff_epoch, color='black', linestyle='-', linewidth=1.5, label='Minimum Difference', zorder=-1)
+        
+        # Add text annotation for the minimum line
+        y_text_position_min = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
+        ax1.text(min_diff_epoch + 0.01, y_text_position_min, f"  Min diff at Epoch {min_diff_epoch:,}", color='black', fontsize=9, rotation=90, va='bottom', 
+                ha='left',zorder=2)
         
         # add text to the plot to show the number of samples trained on at the end of the last epoch
         plt.text(0.86, 1.028, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
                         transform=plt.gca().transAxes)
         
+        ax1.set_xlabel("Epoch")
+        ax1.set_ylabel("Critic Loss Real - Fake")
+        ax1.legend()
+        ax1.grid(True, alpha=0.4)
         plt.title("Critic Loss Real - Fake vs. Epoch", fontsize=18, pad=10)
         
-        plt.tight_layout()
         plot_path = self.this_epoch_checkpoint_dir.joinpath("loss_critic_real_fake_diff.png")
         plt.savefig(plot_path, dpi=100)
         shutil.copy(plot_path, self.model_training_output_dir.joinpath("loss_critic_real_fake_diff.png"))
         plt.close()
         plt.clf()
         
-        ################################ Stacked plots for critic and generator learning rates ###############################
+        ########################################### Stacked plots for critic and generator learning rates ############################################
         loss_columns = ["critic_loss", "gen_loss"]
         learning_rates_columns = ["critic_learning_rate", "generator_learning_rate"]
         plot_line_colors = ["#1F77B4", "#D62728"]
@@ -460,14 +475,10 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             # Plot the loss metric
             axs[0].plot(epochs, self.metrics_dataframe[loss_col], label=loss_col.replace("_", " ").title(), zorder=1, color=line_color)
             axs[0].set_ylabel(loss_col.replace("_", " ").title())
-            axs[0].legend()
-            axs[0].grid(True, alpha=0.4)
             
             # Plot the learning rate
             axs[1].plot(epochs, self.metrics_dataframe[lr_col], label=lr_col.replace("_", " ").title(), zorder=1, color=line_color)
             axs[1].set_ylabel(lr_col.replace("_", " ").title())
-            axs[1].legend()
-            axs[1].grid(True, alpha=0.4)
             
             # Add vertical lines for model loading events with a single label for legend
             for i, model_load_epoch in enumerate(model_load_indices):
@@ -477,16 +488,21 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                     line_label = ""
                 axs[0].axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
                 axs[1].axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
-                # add text to show the number of samples at this checkpoint
+                # add text to show the epoch after the model was loaded
                 y_text_position = ((axs[0].get_ylim()[1] - axs[0].get_ylim()[0]) * 0.02) + axs[0].get_ylim()[0]
                 axs[0].text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', 
-                        ha='right', zorder=2)
+                            ha='right', zorder=2)
                 axs[1].text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', 
-                        ha='right', zorder=2)
+                            ha='right', zorder=2)
             
             # add text to the plot to show the number of samples trained on at the end of the last epoch
             plt.text(0.86, 1.028, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
-                        transform=plt.gca().transAxes)
+                    transform=plt.gca().transAxes)
+            
+            axs[0].legend()
+            axs[0].grid(True, alpha=0.4)
+            axs[1].legend()
+            axs[1].grid(True, alpha=0.4)
             
             plt.suptitle(f"{loss_col.replace('_', ' ').title()} and {lr_col.replace('_', ' ').title()} vs. Epoch", fontsize=18, y=0.96)
             axs[1].set_xlabel("Epoch")
@@ -502,7 +518,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             plt.close()
             plt.clf()
         
-        ############################### create a plot to show memory usage over time ##############################
+        ################################################ create a plot to show memory usage over time ################################################
         fig, ax1 = plt.subplots(figsize=(10, 6))
         # Plot the memory usage in GB
         ax1.plot(epochs, self.metrics_dataframe["memory_usage_gb"], label="Memory Usage (GB)", zorder=1)
@@ -514,7 +530,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
-            # add text to show the number of samples at this checkpoint
+            # add text to show the epoch after the model was loaded
             y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
             ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
                     zorder=2)
@@ -536,7 +552,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         plt.close()
         plt.clf()
         
-        ############################## create a plot to show GPU memory usage over time ##############################
+        ############################################## create a plot to show GPU memory usage over time ##############################################
         fig, ax1 = plt.subplots(figsize=(10, 6))
         # Plot the GPU memory usage in GB
         ax1.plot(epochs, self.metrics_dataframe["gpu_memory_usage_gb"], label="GPU Memory Usage (GB)", zorder=1)
@@ -547,7 +563,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
-            # add text to show the number of samples at this checkpoint
+            # add text to show the epoch after the model was loaded
             y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
             ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
                     zorder=2)
@@ -601,7 +617,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def generate_validation_samples(self):
         """
         Generates and saves a grid of validation images produced by the generator model, along with their critic scores. The images are saved to the
-        current epoch checkpoint directory and a copy is saved to the model training output directory. Using these generated images a GIF of all 
+        current epoch checkpoint directory and a copy is saved to the model training output directory. Using these generated images a video of all 
         saved images is generated every specified number of epochs.
         
         Parameters:
@@ -683,7 +699,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         )
         
         if not validation_samples_paths:
-            print("No validation samples found. Skipping GIF generation.")
+            print("No validation samples found. Skipping video generation.")
             return
         
         # Read the first image to get its dimensions
@@ -736,7 +752,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         csv_save_path = self.this_epoch_checkpoint_dir.joinpath("training_metrics.csv")
         self.metrics_dataframe.to_csv(csv_save_path, index=False)
         
-        ############################## create plots for training and metric calculation durations ##############################
+        ######################################### create plots for training and metric calculation durations #########################################
         # Identify locations where model was loaded
         model_load_indices = self.metrics_dataframe.loc[self.metrics_dataframe['model_loaded'], 'epoch']
         
@@ -757,7 +773,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             else:
                 line_label = ""
             ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=2)
-            # add text to show the number of samples at this checkpoint
+            # add text to show the epoch after the model was loaded
             y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
             ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
                     zorder=2)

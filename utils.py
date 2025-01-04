@@ -56,7 +56,7 @@ def parse_arguments():
     
     ############################################################### dataset arguments ################################################################
     # dataset_subset_percentage
-    parser.add_argument("--dataset_subset_percentage", type=float, default=1.0,
+    parser.add_argument("--dataset_subset_percentage", type=float, default=1.00,
         help="The percentage of the dataset to use for training in small subset mode. Cannot be set with debug_run.")
     # random_shift_frequency
     parser.add_argument("--random_rotate_frequency", type=float, default=0.0,
@@ -76,31 +76,31 @@ def parse_arguments():
     parser.add_argument("--batch_size", type=int, default=512,
         help="The batch size for training the model.")
     # epochs
-    parser.add_argument("--epochs", type=int, default=200,
+    parser.add_argument("--epochs", type=int, default=1000,
         help="The number of epochs to train the model on the current run. On reload, the model will train this many more epochs.")
     # critic_to_generator_training_ratio
-    parser.add_argument("--critic_to_generator_training_ratio", type=int, default=4,
+    parser.add_argument("--critic_to_generator_training_ratio", type=int, default=5,
         help="The number of times the critic is trained for every time the generator is trained.")
     # gradient_penalty_weight
     parser.add_argument("--gradient_penalty_weight", type=float, default=10.0,
         help="The weight of the gradient penalty in the loss function.")
-    # initial_critic_learning_rate
+    # initial_critic_learning_rate  (set to 60% of the generator learning rate)
     parser.add_argument("--initial_critic_learning_rate", type=float, default=6e-5,
         help="The initial learning rate for the model training.")
     # initial_generator_learning_rate
     parser.add_argument("--initial_generator_learning_rate", type=float, default=1e-4,
         help="The initial learning rate for the model training.")
     # learning_rate_warmup_epochs
-    parser.add_argument("--learning_rate_warmup_epochs", type=int, default=100,
+    parser.add_argument("--learning_rate_warmup_epochs", type=int, default=50,
         help="The number of epochs to warm up the learning rate.")
     # learning_rate_decay
-    parser.add_argument("--learning_rate_decay", type=float, default=0.95,
+    parser.add_argument("--learning_rate_decay", type=float, default=0.99,
         help="The decay factor for the learning rate.")
     # min_critic_learning_rate
-    parser.add_argument("--min_critic_learning_rate", type=float, default=6e-6,
+    parser.add_argument("--min_critic_learning_rate", type=float, default=2.25e-5,
         help="The minimum learning rate for the critic.")
     # min_generator_learning_rate
-    parser.add_argument("--min_generator_learning_rate", type=float, default=1e-5,
+    parser.add_argument("--min_generator_learning_rate", type=float, default=3.75e-5,
         help="The minimum learning rate for the generator.")
     
     ######################################################### model and video save frequency #########################################################
@@ -221,7 +221,7 @@ def get_last_model_save_dir_path(model_checkpoints_dir):
     """
     helper script for the end of the training script to get the path to the last model save directory
     
-    Arguments:
+    Parameters:
         model_checkpoints_dir (Path): the path to the directory containing the model checkpoint directories
     
     Returns:
@@ -241,19 +241,19 @@ def backup_model_code(model_training_output_dir: Path):
     extra mechanism to backup the code used for a specific model training run assuming a hardcoded file name is used and everything is run from the
     base directory. This is not best practice, but is a quick and hacky way to backup the code used for a specific model training run.
     
-    arguments:
+    Parameters:
         model_training_output_dir: Path object, the directory where the model training output is stored
     
-    returns:
+    Returns:
         None
     """
     model_code_source = Path("critic_and_generator_models.py")
     model_code_destination = model_training_output_dir.joinpath("model_architecture_and_summary").joinpath(model_code_source)
     if model_code_source.exists():
         shutil.copy(model_code_source, model_code_destination)
-        print(f"Code file {model_code_source} backed up successfully.")
+        print(f"Model source code {model_code_source} backed up successfully.")
     else:
-        print(f"Code file {model_code_source} does not exist. Skipping backup of code file.")
+        print(f"Model source code {model_code_source} does not exist. Skipping backup of code file.")
     return
 
 
@@ -362,6 +362,12 @@ def get_timestamp():
 def get_experiment_number(experiment_save_dir):
     """
     function to get a 4-digit experiment number to put at the beginning of the experiment save directory name
+    
+    Parameters:
+        experiment_save_dir (Path): the path to the directory where the experiments are saved
+    
+    Returns:
+        formatted_experiment_number (str): the 4-digit experiment number
     """
     # get the experiment numbers of the directories in the experiment save directory
     experiment_dirs = os.listdir(experiment_save_dir)

@@ -1,4 +1,6 @@
-# Script to test out the training and reloading of the WGAN-GP model with a specific checkpoint
+# Script to test out the training and reloading of the WGAN-GP model with a specific checkpoint. This can be modified to help pick up training
+# from a failed run. However, some of the epochs may need to be deleted so that the last epoch in the model_checkpoints directory has a 
+# model_save directory available for reloading.
 #!/bin/bash
 
 # Activate the Conda environment
@@ -8,8 +10,8 @@ conda activate keras-gan-gpu
 echo running the model from a specific checkpoint | tee shell_scripts/training_logs.txt
 # no need to specify a save frequency since the model is always saved on_train_end
 python train_WGAN_GP.py \
-    --reload_path /home/nicklalo/coding-projects/Keras-3.0-WGAN-GP-Conditional/wgan_gp_mnist_training_runs/0023__2025-01-02__10-05-53 \
-    --dataset_subset_percentage 0.01 \
-    --epochs 1
+    --reload_path wgan_gp_mnist_training_runs/2025-01-03__10-51-05__0060 \
+    --dataset_subset_percentage 0.1 \
+    --epochs 5
 echo done running the model from a specific checkpoint | tee -a shell_scripts/training_logs.txt
 echo | tee -a shell_scripts/training_logs.txt

@@ -98,13 +98,11 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         generator_optimizer = keras.optimizers.Adam(learning_rate=training_params["initial_generator_learning_rate"], beta_1=0.5, beta_2=0.9)
         critic_optimizer = keras.optimizers.Adam(learning_rate=training_params["initial_critic_learning_rate"], beta_1=0.5, beta_2=0.9)
         
-        # Get the wgan_gp model
+        # initialize wgan_gp model which will train the critic and generator models
         wgan_gp = WGAN_GP(
             critic=critic_model,
             generator=generator_model,
-            num_classes=num_classes,
             latent_dim=training_params["noise_shape"],
-            critic_input_shape=img_shape,
             critic_learning_rate=training_params["initial_critic_learning_rate"],
             generator_learning_rate=training_params["initial_generator_learning_rate"],
             learning_rate_warmup_epochs=training_params["learning_rate_warmup_epochs"],
@@ -115,7 +113,7 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
             gp_weight=training_params["gradient_penalty_weight"],
             )
         
-        # Compile the wgan_gp model
+        # Compile the wgan_gp model (adds the optimizers to the wgan_gp model)
         wgan_gp.compile(
             critic_optimizer=critic_optimizer,
             gen_optimizer=generator_optimizer,
@@ -162,13 +160,12 @@ def model_reload_test(wgan_gp, model_checkpoints_dir):
     """
     Tests the consistency of the WGAN-GP model by comparing the outputs of the 
     generator before and after reloading the model from the last checkpoint.
-    Args:
+    Parameters:
         wgan_gp: The trained WGAN-GP model instance.
         model_checkpoints_dir (str): Directory path where model checkpoints are saved.
     Returns:
         None. Prints whether the model reload test passed or failed based on 
         the comparison of generated images.
-    
     """
     # generate some images with the trained model
     noise = tf.random.normal([10, training_params["noise_shape"]])
@@ -177,15 +174,23 @@ def model_reload_test(wgan_gp, model_checkpoints_dir):
     
     # reload the model and regenerate the images
     last_model_save_dir_path = get_last_model_save_dir_path(model_checkpoints_dir)
+    if not last_model_save_dir_path.exists():
+        print(f"{'#'*54} Save-Reload Output Integrity Test Failed {'#'*54}")
+        print(f"    {'  ERROR  '*16}")
+        print(f"please investigate why the path to the last model save directory does not exist.\n")
+        return
+    
     reloaded_wgan_gp = keras.models.load_model(last_model_save_dir_path)
     reloaded_generated_image = reloaded_wgan_gp.generator.predict([noise, labels])
     
     # compare the generated images between the trained model and the reloaded model with a numpy all close check
     all_close_results = np.allclose(generated_image, reloaded_generated_image, atol=1e-6)
     if all_close_results:
-        print("model reload test passed!")
+        print(f"{'#'*53} Save-Reload Output Integrity Test Passed! {'#'*54}\n")
     else:
-        print("model reload test failed!")
+        print(f"{'#'*54} Save-Reload Output Integrity Test Failed {'#'*54}")
+        print(f"    {'  ERROR  '*16}")
+        print(f"please investigate why the reloaded model did not pass the np.allclose test before continuing to use the model.\n")
     return
 
 

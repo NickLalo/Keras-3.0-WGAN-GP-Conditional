@@ -22,13 +22,41 @@ warnings.filterwarnings(
 
 class WGAN_GP(keras.Model):
     """
-    WGAN-GP model
+    WGAN-GP model wrapper for training a Wasserstein GAN with gradient penalty.
+    
+    Parameters to __init__:
+        critic (keras.Model): The critic model.
+        generator (keras.Model): The generator model.
+        num_classes (int): The number of classes in the dataset.
+        latent_dim (int): The dimensionality of the latent space.
+        critic_learning_rate (float): The learning rate for the critic.
+        generator_learning_rate (float): The learning rate for the generator.
+        learning_rate_warmup_epochs (int): The number of epochs before learning rate decay begins.
+        learning_rate_decay (float): The rate at which the learning rate decays each epoch after the warmup period.
+        min_critic_learning_rate (float): The minimum learning rate for the critic.
+        min_generator_learning_rate (float): The minimum learning rate for the generator.
+        critic_extra_steps (int): The number of extra critic training steps per generator training step.
+        gp_weight (float): The weight of the gradient penalty term.
+    
+    Parameters to compile:
+        critic_optimizer (keras.optimizers.Optimizer): The optimizer for the critic.
+        gen_optimizer (keras.optimizers.Optimizer): The optimizer for the generator.
+    
+    Methods:
+        __init__: Initializes the WGAN-GP model.
+        compile: Compiles the model and adds the critic and generator optimizers.
+        gradient_penalty: Computes the gradient penalty for the critic.
+        train_step: The custom training step for the WGAN-GP
+        build: Builds the model. Required to not throw errors when saving and loading the model.
+        get_config: Custom saving step 1
+        get_compile_config: Custom saving step 2
+        from_config: Custom loading step 1
+        compile_from_config: Custom loading step 2
     """
     def __init__(
         self,
         critic,
         generator,
-        num_classes,
         latent_dim,
         critic_learning_rate,
         generator_learning_rate,
@@ -37,14 +65,15 @@ class WGAN_GP(keras.Model):
         min_critic_learning_rate,
         min_generator_learning_rate,
         critic_extra_steps=5,
-        critic_input_shape=None,
         gp_weight=10.0,
         **kwargs
     ):
         super().__init__(**kwargs)
+        # the critic and generator models the WGAN-GP model will train
         self.critic = critic
         self.generator = generator
-        self.num_classes = num_classes
+        
+        # used in the training step to generate random latent vectors for the generator
         self.latent_dim = latent_dim
         
         # learning rate parameters used by the learning_rate_scheduler method in the Training_Monitor callback
@@ -59,13 +88,13 @@ class WGAN_GP(keras.Model):
         
         # in a WGAN-GP, the critic trains for a number of steps and then generator trains for one step
         self.num_critic_steps = critic_extra_steps
-        self.critic_input_shape = critic_input_shape
+        # the weight of the gradient penalty term in the critic loss
         self.gp_weight = gp_weight
         
-        # set dummy value for self.optimizer avoid errors at the end of .fit() call
+        # set dummy value for self.optimizer avoid errors at the end of .fit() call because we are using a custom training loop
         self.optimizer = None
         
-        # build the model to avoid errors when loading the model
+        # build the model to avoid errors when reloading the model after saving
         self.build()
         return
     
@@ -132,22 +161,13 @@ class WGAN_GP(keras.Model):
         # Get the batch size from the data as sometimes the last batch can be smaller
         batch_size = tf.shape(real_images)[0]
         
-        # For each batch, we are going to perform the
-        # following steps as laid out in the original paper:
-        # 1. Train the generator and get the generator loss
-        # 2. Train the critic and get the critic loss
-        # 3. Calculate the gradient penalty
-        # 4. Multiply this gradient penalty with a constant weight factor
-        # 5. Add the gradient penalty to the critic loss
-        # 6. Return the generator and critic losses as a loss dictionary
-        
         # # Initialize lists to track training metrics
         critic_real_scores = []
         critic_fake_scores = []
         gradient_penalties = []
         critic_losses = []
         
-        ####################################### Train the critic #######################################
+        ################################################################ Train Critic ################################################################
         for _ in range(self.num_critic_steps):
             # Get a batch of random latent vectors
             random_latent_vectors = tf.random.normal(shape=(batch_size, self.latent_dim))
@@ -164,8 +184,6 @@ class WGAN_GP(keras.Model):
                 critic_real_scores.append(tf.reduce_mean(real_logits))
                 critic_fake_scores.append(tf.reduce_mean(fake_logits))
                 
-                # Calculate the critic loss
-                # critic_cost = self.critic_loss_fn(real_img=real_logits, fake_img=fake_logits)
                 # Calculate the critic loss using the Wasserstein loss
                 critic_wasserstein_loss = tf.reduce_mean(fake_logits) - tf.reduce_mean(real_logits)
                 
@@ -175,7 +193,7 @@ class WGAN_GP(keras.Model):
                 # Add the gradient penalty to the critic loss
                 critic_loss = critic_wasserstein_loss + gp * self.gp_weight
                 
-                # Append metrics to track them
+                # track critic loss and gradient penalty for this step
                 gradient_penalties.append(gp)
                 critic_losses.append(critic_loss)
             
@@ -189,7 +207,7 @@ class WGAN_GP(keras.Model):
             # Example:
             # real_images, real_labels = next(iter(self.train_dataset))
         
-        ######################################### Train the generator #########################################
+        ############################################################## Train Generator ###############################################################
         # Generate a new batch of random latent vectors
         random_latent_vectors = tf.random.normal(shape=(batch_size, self.latent_dim))
         
@@ -225,9 +243,7 @@ class WGAN_GP(keras.Model):
         return return_dict
     
     def build(self, input_shape=None):
-        # Explicitly build the generator and critic models
-        self.generator.build(input_shape=(None, self.latent_dim))
-        self.critic.build(input_shape=self.critic_input_shape)
+        # required to avoid errors when saving and loading the model
         super().build(input_shape)
         return
     
@@ -246,7 +262,6 @@ class WGAN_GP(keras.Model):
         custom_config = {
             "critic": keras.saving.serialize_keras_object(self.critic),
             "generator": keras.saving.serialize_keras_object(self.generator),
-            "num_classes": self.num_classes,
             "latent_dim": self.latent_dim,
             "critic_extra_steps": self.num_critic_steps,
             "gp_weight": self.gp_weight,
@@ -293,7 +308,6 @@ class WGAN_GP(keras.Model):
         generator = keras.saving.deserialize_keras_object(config.pop("generator"), custom_objects=custom_objects)
         
         # get the extra configurations for custom model attributes
-        num_classes = config.pop("num_classes")
         latent_dim = config.pop("latent_dim")
         critic_learning_rate = config.pop("critic_learning_rate")
         generator_learning_rate = config.pop("generator_learning_rate")
@@ -308,7 +322,6 @@ class WGAN_GP(keras.Model):
         model = cls(
             critic=critic, 
             generator=generator,
-            num_classes=num_classes,
             latent_dim=latent_dim,
             critic_learning_rate=critic_learning_rate,
             generator_learning_rate=generator_learning_rate,
