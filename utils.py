@@ -56,7 +56,7 @@ def parse_arguments():
     
     ############################################################### dataset arguments ################################################################
     # dataset_subset_percentage
-    parser.add_argument("--dataset_subset_percentage", type=float, default=1.00,
+    parser.add_argument("--dataset_subset_percentage", type=float, default=1.0,
         help="The percentage of the dataset to use for training in small subset mode. Cannot be set with debug_run.")
     # random_shift_frequency
     parser.add_argument("--random_rotate_frequency", type=float, default=0.0,
@@ -111,7 +111,7 @@ def parse_arguments():
     parser.add_argument("--video_of_validation_frequency", type=int, default=1,
         help="The frequency of creating a video of the validation samples.")
     # FID_score_frequency
-    parser.add_argument("--FID_score_frequency", type=int, default=0,
+    parser.add_argument("--FID_score_frequency", type=int, default=1,
         help="The frequency of calculating the FID score. Defaults to 0 (no FID score calculation) because it is computationally expensive.")
     
     ############################################################### validate arguments ###############################################################

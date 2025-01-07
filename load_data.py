@@ -2,8 +2,11 @@
 Script to hold functions to load data for the WGAN_GP model with KerasCV for random rotation, random translation, and random zoom augmentations.
 However, due to the small image size of MNIST, these augmentations cause modified images to look significantly different from the original images.
 Due to this limitation, these augmentations shouldn't be used for MNIST, but can be explored when working with larger image datasets.
-"""
 
+One workaround worth exploring in the future to utilize the KerasCV augmentations is to adopt the method used in the Training Generative Adversarial 
+Networks with Limited Data paper by Karras et. al. (https://arxiv.org/abs/2006.06676). The method used excels at training a GAN with a small dataset
+and an adaptive augmentation strategy that prevents the critic from overfitting to the training data.
+"""
 
 from pathlib import Path
 import random
@@ -16,137 +19,139 @@ import keras_cv as kcv
 
 # Set a random number for shuffling the dataset before the global random seed for reproducibility so that the visualized training samples are 
 # different each run. It is important to take a good look at the training samples to really understand the data the model is attempting to generate.
-# NOTE: the global random seed for reproducibility must be set after any thing is imported from this file
+# NOTE: the global random seed for reproducibility must be set after anything is imported from this file.
 RANDOM_NUMBER_FOR_DATASET_SHUFFLE = random.randint(0, 1000)
 
 
-############################################################ KerasCV Augmentation Layers #############################################################
-random_rotation_layer = kcv.layers.RandomRotation(
-    factor=(5 / 180.0, 10 / 180.0),  # rotate between 5° to 10°
-    fill_mode="constant",
-    fill_value=-1.0,  # fill corners with -1.0 (images are in [-1,1])
-)
-
-random_translation_layer = kcv.layers.RandomTranslation(
-    height_factor=0.1,  # up to 10% shift vertically
-    width_factor=0.1,   # up to 10% shift horizontally
-    fill_mode="constant",
-    fill_value=-1.0,
-)
-
-random_zoom_layer = kcv.layers.RandomZoom(
-    height_factor=(0.0, 0.2),  # up to 20% zoom in/out vertically
-    width_factor=(0.0, 0.2),   # up to 20% zoom in/out horizontally
-    fill_mode="constant",
-    fill_value=-1.0,
-)
-
-
-############################################################ KerasCV Augmentation Helpers ############################################################
-def apply_keras_cv_layer(image, layer):
+class DataAugmentor:
     """
-    Internal helper to apply a KerasCV layer to a single image (H, W, C).
-    KerasCV expects (batch, H, W, C), and might produce float16 under a
-    mixed_float16 policy. The result back to float32 to avoid errors.
-    
-    Parameters: 
-        image: tf.Tensor, shape (H, W, C)
-        layer: KerasCV layer object
-    
-    Returns:
-        Augmented image as tf.Tensor, shape (H, W, C), float
+    A class to encapsulate KerasCV augmentation layers and provide methods to apply them conditionally.
     """
-    # Cast input to float32 for augmentation
-    image_32 = tf.cast(image, tf.float32)
     
-    # Expand dims to (1, H, W, C)
-    image_batched = tf.expand_dims(image_32, axis=0)
-    # Apply augmentation
-    augmented_batched = layer(image_batched, training=True)
-    # Squeeze back to (H, W, C)
-    augmented = tf.squeeze(augmented_batched, axis=0)
+    def __init__(self):
+        """
+        Initialize the augmentation layers.
+        """
+        self.random_rotation_layer = kcv.layers.RandomRotation(
+            factor=(5 / 180.0, 10 / 180.0),  # rotate between 5° to 10°
+            fill_mode="constant",
+            fill_value=-1.0,  # fill corners with -1.0 (images are in [-1,1])
+        )
+        
+        self.random_translation_layer = kcv.layers.RandomTranslation(
+            height_factor=0.1,  # up to 10% shift vertically
+            width_factor=0.1,   # up to 10% shift horizontally
+            fill_mode="constant",
+            fill_value=-1.0,
+        )
+        
+        self.random_zoom_layer = kcv.layers.RandomZoom(
+            height_factor=(0.0, 0.2),  # up to 20% zoom in/out vertically
+            width_factor=(0.0, 0.2),   # up to 20% zoom in/out horizontally
+            fill_mode="constant",
+            fill_value=-1.0,
+        )
     
-    # Force final output to float32
-    return tf.cast(augmented, tf.float32)
+    def apply_keras_cv_layer(self, image, layer):
+        """
+        Internal helper to apply a KerasCV layer to a single image (H, W, C).
+        KerasCV expects (batch, H, W, C), and might produce float16 under a
+        mixed_float16 policy. The result back to float32 to avoid errors.
+        
+        Parameters: 
+            image: tf.Tensor, shape (H, W, C)
+            layer: KerasCV layer object
+        
+        Returns:
+            Augmented image as tf.Tensor, shape (H, W, C), float32
+        """
+        # Cast input to float32 for augmentation
+        image_32 = tf.cast(image, tf.float32)
+        
+        # Expand dims to (1, H, W, C)
+        image_batched = tf.expand_dims(image_32, axis=0)
+        
+        # Apply augmentation
+        augmented_batched = layer(image_batched, training=True)
+        
+        # Squeeze back to (H, W, C)
+        augmented = tf.squeeze(augmented_batched, axis=0)
+        
+        # Force final output to float32
+        return tf.cast(augmented, tf.float32)
+    
+    def map_data_random_rotation(self, image, label, random_decision):
+        """
+        Apply random rotation via KerasCV if random_decision is True.
+        
+        Parameters:
+            image: tf.Tensor, shape (H, W, C)
+            label: tf.Tensor, shape ()
+            random_decision: tf.Tensor, shape ()
+        
+        Returns:
+            Augmented image as tf.Tensor, shape (H, W, C), float32
+            label: tf.Tensor, shape ()
+        """
+        def do_aug():
+            aug_image = self.apply_keras_cv_layer(image, self.random_rotation_layer)
+            return tf.cast(aug_image, tf.float32)
+        
+        def no_aug():
+            return tf.cast(image, tf.float32)
+        
+        image_final = tf.cond(random_decision, do_aug, no_aug)
+        return image_final, label
+    
+    def map_data_random_translation(self, image, label, random_decision):
+        """
+        Apply random translation via KerasCV if random_decision is True.
+        
+        Parameters:
+            image: tf.Tensor, shape (H, W, C)
+            label: tf.Tensor, shape ()
+            random_decision: tf.Tensor, shape ()
+        
+        Returns:
+            Augmented image as tf.Tensor, shape (H, W, C), float32
+            label: tf.Tensor, shape ()
+        """
+        def do_aug():
+            aug_image = self.apply_keras_cv_layer(image, self.random_translation_layer)
+            return tf.cast(aug_image, tf.float32)
+        
+        def no_aug():
+            return tf.cast(image, tf.float32)
+        
+        image_final = tf.cond(random_decision, do_aug, no_aug)
+        return image_final, label
+    
+    def map_data_random_zoom(self, image, label, random_decision):
+        """
+        Apply random zoom via KerasCV if random_decision is True.
+        
+        Parameters:
+            image: tf.Tensor, shape (H, W, C)
+            label: tf.Tensor, shape ()
+            random_decision: tf.Tensor, shape ()
+        
+        Returns:
+            Augmented image as tf.Tensor, shape (H, W, C), float32
+            label: tf.Tensor, shape ()
+        """
+        def do_aug():
+            aug_image = self.apply_keras_cv_layer(image, self.random_zoom_layer)
+            return tf.cast(aug_image, tf.float32)
+        
+        def no_aug():
+            return tf.cast(image, tf.float32)
+        
+        image_final = tf.cond(random_decision, do_aug, no_aug)
+        return image_final, label
 
 
-def map_data_random_rotation(image, label, random_decision):
-    """
-    Apply random rotation via KerasCV if random_decision is True.
-    NOTE: random_rotation_layer defined above specifies the rotation range.
-    
-    Parameters:
-        image: tf.Tensor, shape (H, W, C)
-        label: tf.Tensor, shape ()
-        random_decision: tf.Tensor, shape ()
-    
-    Returns:
-        Augmented image as tf.Tensor, shape (H, W, C), float32
-        label: tf.Tensor, shape ()
-    """
-    def do_aug():
-        aug_image = apply_keras_cv_layer(image, random_rotation_layer)
-        return tf.cast(aug_image, tf.float32)
-    
-    def no_aug():
-        return tf.cast(image, tf.float32)
-    
-    image_final = tf.cond(random_decision, do_aug, no_aug)
-    return image_final, label
-
-
-def map_data_random_translation(image, label, random_decision):
-    """
-    Apply random translation via KerasCV if random_decision is True.
-    NOTE: random_translation_layer defined above specifies the translation range.
-    
-    Parameters:
-        image: tf.Tensor, shape (H, W, C)
-        label: tf.Tensor, shape ()
-        random_decision: tf.Tensor, shape ()
-    
-    Returns:
-        Augmented image as tf.Tensor, shape (H, W, C), float32
-        label: tf.Tensor, shape ()
-    """
-    def do_aug():
-        aug_image = apply_keras_cv_layer(image, random_translation_layer)
-        return tf.cast(aug_image, tf.float32)
-    
-    def no_aug():
-        return tf.cast(image, tf.float32)
-    
-    image_final = tf.cond(random_decision, do_aug, no_aug)
-    return image_final, label
-
-
-def map_data_random_zoom(image, label, random_decision):
-    """
-    Apply random zoom via KerasCV if random_decision is True.
-    NOTE: random_zoom_layer defined above specifies the zoom range.
-    
-    Parameters:
-        image: tf.Tensor, shape (H, W, C)
-        label: tf.Tensor, shape ()
-        random_decision: tf.Tensor, shape ()
-    
-    Returns:
-        Augmented image as tf.Tensor, shape (H, W, C), float32
-        label: tf.Tensor, shape ()
-    """
-    def do_aug():
-        aug_image = apply_keras_cv_layer(image, random_zoom_layer)
-        return tf.cast(aug_image, tf.float32)
-    
-    def no_aug():
-        return tf.cast(image, tf.float32)
-    
-    image_final = tf.cond(random_decision, do_aug, no_aug)
-    return image_final, label
-
-
-############################################################### Data Loading Function ################################################################
-def load_mnist_data_for_gan(debug_run: bool=False,
+def load_mnist_data_for_gan(augmentor: DataAugmentor,
+                            debug_run: bool=False,
                             dataset_subset_percentage: float=1.0,
                             batch_size: int=512,
                             random_rotate_frequency: float=0.0,
@@ -160,6 +165,7 @@ def load_mnist_data_for_gan(debug_run: bool=False,
     when working with larger image datasets.
     
     Parameters:
+        augmentor: DataAugmentor, instance containing augmentation layers and methods
         debug_run: bool, whether to run in debug mode with minimal data
         dataset_subset_percentage: float, percentage of the dataset to use (0.0 to 1.0)
         batch_size: int, batch size for training
@@ -184,16 +190,18 @@ def load_mnist_data_for_gan(debug_run: bool=False,
     train_images = np.concatenate((train_images, test_images), axis=0)
     train_labels = np.concatenate((train_labels, test_labels), axis=0)
     
-    # 3) reduce dataset size when either debug_mode or dataset_subset_percentage is set
+    # 3) Reduce dataset size when either debug_mode or dataset_subset_percentage is set
     if debug_run:
-        print("\nDEBUG MODE: Using minimal subset of training data.\n")
+        if verbose:
+            print("\nDEBUG MODE: Using minimal subset of training data.\n")
         subset_size = 1024
         train_images = train_images[:subset_size]
         train_labels = train_labels[:subset_size]
     elif dataset_subset_percentage > 1.0:
         raise ValueError(f"Dataset subset percentage ({dataset_subset_percentage}) > 1.0.")
     elif dataset_subset_percentage < 1.0:
-        print(f"\nDATASET SUBSET PERCENTAGE: Using {dataset_subset_percentage * 100:.0f}% of data.\n")
+        if verbose:
+            print(f"\nDATASET SUBSET PERCENTAGE: Using {dataset_subset_percentage * 100:.0f}% of data.\n")
         subset_size = int(dataset_subset_percentage * len(train_images))
         train_images = train_images[:subset_size]
         train_labels = train_labels[:subset_size]
@@ -208,28 +216,26 @@ def load_mnist_data_for_gan(debug_run: bool=False,
     # 5) Create Dataset
     train_dataset = tf.data.Dataset.from_tensor_slices((train_images, train_labels))
     
-    # 6) Random ROTATION
+    # 6) Apply Augmentations
     if random_rotate_frequency > 0:
         def add_random_rotation(image, label):
             random_decision = tf.random.uniform([], 0, 1) < random_rotate_frequency
-            return map_data_random_rotation(image, label, random_decision)
+            return augmentor.map_data_random_rotation(image, label, random_decision)
         train_dataset = train_dataset.map(add_random_rotation, num_parallel_calls=tf.data.AUTOTUNE)
     
-    # 7) Random TRANSLATION
     if random_translate_frequency > 0:
         def add_random_translation(image, label):
             random_decision = tf.random.uniform([], 0, 1) < random_translate_frequency
-            return map_data_random_translation(image, label, random_decision)
+            return augmentor.map_data_random_translation(image, label, random_decision)
         train_dataset = train_dataset.map(add_random_translation, num_parallel_calls=tf.data.AUTOTUNE)
     
-    # 8) Random ZOOM
     if random_zoom_frequency > 0:
         def add_random_zoom(image, label):
             random_decision = tf.random.uniform([], 0, 1) < random_zoom_frequency
-            return map_data_random_zoom(image, label, random_decision)
+            return augmentor.map_data_random_zoom(image, label, random_decision)
         train_dataset = train_dataset.map(add_random_zoom, num_parallel_calls=tf.data.AUTOTUNE)
     
-    # 9) Shuffle, batch, prefetch, cache
+    # 7) Shuffle, batch, prefetch, cache
     # NOTE: the buffer_size can be set to the length of the dataset, but this can cause significant overhead for visualizing the training samples
     # as well as training the model at the start of each epoch. A smaller buffer size was chosen to reduce this time which results in a non-perfectly
     # shuffled dataset that is still good enough for training.
@@ -238,13 +244,13 @@ def load_mnist_data_for_gan(debug_run: bool=False,
         buffer_size = len(train_images)
     train_dataset = (
         train_dataset
-        .shuffle(buffer_size)
+        .shuffle(buffer_size, seed=RANDOM_NUMBER_FOR_DATASET_SHUFFLE)
         .batch(batch_size)
         .prefetch(tf.data.AUTOTUNE)
         .cache()  # can only be used if the dataset fits in memory
     )
     
-    # 10) Get dataset information and print to console
+    # 8) Get dataset information and print to console
     samples_per_epoch = len(train_images)
     img_shape = train_dataset.element_spec[0].shape[1:]
     unique_labels = np.unique(train_labels)
@@ -358,11 +364,20 @@ def visualize_training_samples(train_dataset: tf.data.Dataset, model_training_ou
 
 
 if __name__ == "__main__":
-    # visualize a grid of training samples with random rotation, translation, and zoom augmentations
-    # NOTE: these augmentations should be checked to ensure they are not causing the images to look significantly different from the original images
-    train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(
+    # Instantiate the DataAugmentor class
+    augmentor = DataAugmentor()
+    
+    # Load the MNIST data with augmentations
+    train_dataset, img_shape, num_classes = load_mnist_data_for_gan(
+        augmentor=augmentor,
+        debug_run=False,
+        dataset_subset_percentage=1.0,
+        batch_size=512,
         random_rotate_frequency=0.5,
         random_translate_frequency=0.5,
-        random_zoom_frequency=0.5
+        random_zoom_frequency=0.5,
+        verbose=True
     )
+    
+    # Visualize training samples
     visualize_training_samples(train_dataset, Path.cwd())

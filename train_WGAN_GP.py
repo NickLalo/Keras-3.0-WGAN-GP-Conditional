@@ -31,17 +31,21 @@ keras.mixed_precision.set_global_policy("mixed_float16")
 print("Mixed precision policy:", keras.mixed_precision.global_policy())
 
 from critic_and_generator_models import get_critic_model, get_generator_model
-from load_data import load_mnist_data_for_gan, visualize_training_samples
+from load_data import DataAugmentor, load_mnist_data_for_gan, visualize_training_samples
 from wgan_gp_model import WGAN_GP
 from training_monitor_callback import Training_Monitor
 from utils import parse_arguments, get_timestamp, Terminal_Logger, get_last_checkpoint_paths_for_reload, get_specific_checkpoint_paths_for_reload, \
     print_and_save_training_parameters, print_script_execution_time, get_experiment_number, get_last_model_save_dir_path, backup_model_code
 
 
-# set a random seed for reproducibility
+# set a random seed for reproducibility for Tensorflow, Numpy, and Pythons
 seed = 112
-keras.utils.set_random_seed(seed)  # sets random seed for Tensorflow, Numpy, and Python
-tf.config.experimental.enable_op_determinism()  # sets the graph-level deterministic operations for Tensorflow (can cause a training slowdown)
+keras.utils.set_random_seed(seed)
+# sets the graph-level deterministic operations for Tensorflow (can cause a training slowdown)
+tf.config.experimental.enable_op_determinism()
+# Create a global TensorFlow random generator with a fixed seed for the DataAugmentor class
+generator = tf.random.Generator.from_seed(seed)
+tf.random.set_global_generator(generator)
 
 # Hardcoded path to the directory containing all model training runs
 WGAN_GP_MNIST_MODELS_DIR = Path("wgan_gp_mnist_training_runs")
@@ -62,7 +66,6 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         model_checkpoints_dir (Path): The directory where the model checkpoints will be saved.
         last_checkpoint_dir_path (Path): The directory path of the last checkpoint saved.
         num_classes (int): The number of classes in the dataset.
-        samples_per_epoch (int): The number of samples per epoch in the dataset.
     """
     if training_params["fresh_start"]:
         run_timestamp = get_timestamp()  # Get the current time in the US Central Time Zone
@@ -79,8 +82,11 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         # last checkpoint dir set to None to indicate that we are not loading a model from a checkpoint
         last_checkpoint_dir_path = None
         
+        # Instantiate the DataAugmentor class to augment the training data (if set by cmd line arguments)
+        data_augmentor = DataAugmentor()
+        
         # Load the MNIST dataset for training a WGAN
-        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
+        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(data_augmentor, training_params["debug_run"], 
             training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_rotate_frequency"],
             training_params["random_translate_frequency"], training_params["random_zoom_frequency"])
         
@@ -138,9 +144,12 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         terminal_output_log_filename = model_training_output_dir.joinpath("_terminal_output_logs.txt")
         _ = Terminal_Logger(terminal_output_log_filename)  # don't need to save the logger object
         
+        # Instantiate the DataAugmentor class to augment the training data (if set by cmd line arguments)
+        data_augmentor = DataAugmentor()
+        
         # Load the MNIST dataset for training a WGAN
-        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
-            training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_rotate_frequency"],
+        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(data_augmentor, training_params["debug_run"], 
+            training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_rotate_frequency"], 
             training_params["random_translate_frequency"], training_params["random_zoom_frequency"])
         
         # print out info about the model being reloaded
@@ -201,18 +210,19 @@ if __name__ == "__main__":
     training_params = parse_arguments()
     
     # get the wgan_gp and training data. Model is either created new one or loaded from a previous run's checkpoint
-    wgan_gp, train_dataset, model_training_output_dir, model_checkpoints_dir, last_checkpoint_dir_path, num_classes, samples_per_epoch = \
-        load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR)
+    wgan_gp, train_dataset, model_training_output_dir, model_checkpoints_dir, last_checkpoint_dir_path, num_classes, samples_per_epoch \
+        = load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR)
     
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
         model_training_output_dir,
         model_checkpoints_dir,
         noise_dim=training_params["noise_shape"],
-        samples_per_epoch=samples_per_epoch,
         model_save_frequency=training_params["model_save_frequency"],
         video_of_validation_frequency=training_params["video_of_validation_frequency"],
         FID_score_frequency=training_params["FID_score_frequency"],
+        train_dataset=train_dataset,
+        samples_per_epoch=samples_per_epoch,
         last_checkpoint_dir_path=last_checkpoint_dir_path
         )
     

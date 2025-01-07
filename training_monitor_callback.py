@@ -8,9 +8,12 @@ import os
 import time
 from datetime import datetime
 import shutil
+import numpy as np
 import pandas as pd
 import cv2
+import keras
 import tensorflow as tf
+import scipy.linalg
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use("Agg")  # set to use the "Agg" to avoid tkinter error
@@ -28,10 +31,11 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         model_training_output_dir: str, the main directory to save outputs from the model training
         model_checkpoints_dir: str, the directory to save the model checkpoints and info at each epoch
         noise_dim: int, the noise dimension of the generator
-        samples_per_epoch: int, the number of samples in the training dataset
         model_save_frequency: int, the frequency (in epochs) to save the model
         video_of_validation_frequency: int, the frequency (in epochs) to generate a video of the validation samples
         FID_score_frequency: int, the frequency (in epochs) to calculate the FID score between the real and generated images
+        train_dataset: tf.data.Dataset, the training dataset used to calculate the FID_score_frequency
+        samples_per_epoch: int, the number of samples in the training dataset
         last_checkpoint_dir_path: str, the path to the last checkpoint directory if the model is being reloaded
     
     Methods:
@@ -55,10 +59,11 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 model_training_output_dir,
                 model_checkpoints_dir,
                 noise_dim,
-                samples_per_epoch=0,
                 model_save_frequency=5,
                 video_of_validation_frequency=5,
                 FID_score_frequency=0,
+                train_dataset=None,
+                samples_per_epoch=None,
                 last_checkpoint_dir_path=None
                 ):
         self.model_training_output_dir = model_training_output_dir
@@ -93,6 +98,18 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.model_save_frequency = model_save_frequency
         self.video_of_validation_frequency = video_of_validation_frequency
         self.FID_score_frequency = FID_score_frequency
+        # if we are calculating the FID_score_frequency, initialize the variables needed for the FID score calculation
+        if self.FID_score_frequency > 0:
+            # By default, include_top=False + pooling='avg' gives a (N, 2048) feature vector
+            self.inception_model = keras.applications.inception_v3.InceptionV3(weights='imagenet', include_top=False, pooling='avg')
+        else:
+            self.inception_model = None
+        # placeholders for the real and generated images to calculate the FID score
+        self.mu_real = None
+        self.sigma_real = None
+        
+        # a reference to the training dataset to calculate the FID score between the real and generated images
+        self.train_dataset = train_dataset
         
         # counter to track the number of samples the model has been trained on so far (not including the extra steps for the critic)
         self.samples_per_epoch = samples_per_epoch
@@ -367,7 +384,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             ax1.set_ylabel(col.replace("_", " ").title())
             ax1.legend()
             ax1.grid(True, alpha=0.4)
-            plt.title(f"{col.replace('_', ' ').title()} vs. Epoch", fontsize=18, pad=10)
+            plt.title(f"{col.replace('_', ' ').title()} vs. Epoch", fontsize=18)
             plt.tight_layout()
             
             # move the word "loss" to the front of the filename for better sorting for the loss plots
@@ -410,7 +427,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         ax1.set_ylabel("Loss Value")
         ax1.legend()
         ax1.grid(True, alpha=0.4)
-        plt.title("All Losses vs. Epoch", fontsize=18, pad=10)
+        plt.title("All Losses vs. Epoch", fontsize=18)
         plt.tight_layout()
         
         # Save the combined plot to the current epoch checkpoint directory
@@ -422,7 +439,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         plt.clf()
         print(f"\nCombined loss plot saved to: {combined_plot_main_dir_path}")
         
-        ########################################################## critic loss real vs fake ##########################################################
+        #################################################### critic loss real vs fake difference #####################################################
         # Create a plot for the difference of the critic loss on real and fake samples
         fig, ax1 = plt.subplots(figsize=(10, 6))
         
@@ -455,8 +472,9 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         ax1.axvline(x=min_diff_epoch, color='black', linestyle='-', linewidth=1.5, label='Minimum Difference', zorder=-1)
         
         # Add text annotation for the minimum line
-        y_text_position_min = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
-        ax1.text(min_diff_epoch + 0.01, y_text_position_min, f"  Min diff at Epoch {min_diff_epoch:,}", color='black', fontsize=9, rotation=90, 
+        y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.25) + ax1.get_ylim()[0]
+        x_text_position = min_diff_epoch + (ax1.get_xlim()[1] - ax1.get_xlim()[0]) * 0.007
+        ax1.text(x_text_position, y_text_position, f"  Min diff at Epoch {min_diff_epoch:,}", color='black', fontsize=9, rotation=90, 
                 va='bottom', ha='left',zorder=2)
         
         # add text to the plot to show the number of samples trained on at the end of the last epoch
@@ -467,7 +485,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         ax1.set_ylabel("Critic Loss Real - Fake")
         ax1.legend()
         ax1.grid(True, alpha=0.4)
-        plt.title("Critic Loss Real - Fake vs. Epoch", fontsize=18, pad=10)
+        plt.title("Critic Loss Real - Fake vs. Epoch", fontsize=18, loc='left')
         
         plot_path = self.this_epoch_checkpoint_dir.joinpath("loss_critic_real_fake_diff.png")
         plt.savefig(plot_path, dpi=100)
@@ -749,13 +767,189 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         print(f"Video of validation samples across epochs saved to: {video_copy_path}")
         return
     
-    def calculate_fid_score(self):
+    def calculate_FID_score(self):
         """
-        method to estimate the FID score of the generated images compared to the real images, log the score to the metrics dataframe, and create a
-        plot of the FID score across epochs highlighting the minimum FID score. This can be a time-consuming process but give a good estimate of the
-        quality of the generated images.
+        Uses the activations of an intermediate layer of the InceptionV3 model to calculate the Frechet Inception Distance (FID) between the real
+        images and the generated images. The FID score is a measure of the similarity between two sets of images which can give a good estimate of
+        the quality of the generated images compared to the real images. The lower the FID score, the better the generated images are. This can be a
+        time-consuming process. 10,000 is the recommended number of samples to use for this calculation, but a smaller number can be used for faster
+        computation.
+        
+        for more info on this metric, 
+        see this W&B article: https://wandb.ai/authors/frechet-inception-distance/reports/How-to-Evaluate-GANs--VmlldzoxMjYwMjI 
+        see the original paper: https://arxiv.org/abs/1706.08500
+        
+        Also consider computing precision, recall, F1, ROC, AUC, IS, and Minimum Mean Distance (MMD) scores for a more comprehensive evaluation of the
+        generated images.
         """
+        ############################################################ calculate FID score #############################################################
+        # hardcoded batch size for the FID score calculation
+        batch_size = 128
+        # hardcoded number of classes for the MNIST dataset
+        num_classes = 10
+        # number of samples to generate for the FID score calculation
+        sample_count = 10_000
+        
+        # get the mu and sigma values for real images if they haven't been calculated yet
+        if self.mu_real is None or self.sigma_real is None:
+            print(f"\nCalculating mu and sigma values for real images...\nThese values will be saved to speed up future FID calculations.")
+            # get the real images from the MNIST dataset
+            samples_real = []
+            # get samples from the MNIST dataset to calculate the FID score
+            while len(samples_real) < sample_count:
+                for real_images, real_labels in self.train_dataset.take(1):
+                    for image, label in zip(real_images, real_labels):
+                        samples_real.append(image)
+            # cap the number of samples to 10,000 and convert the list to a numpy array
+            samples_real = np.array(samples_real[:sample_count])
+            # preprocess the real samples for the InceptionV3 model
+            samples_real = self._preprocess_MNIST_for_FID(samples_real)
+            # get the activations for the real samples
+            activations_real = self._get_inception_activations_for_FID(samples_real, batch_size=batch_size)
+            # calculate the mu and sigma values for the real samples
+            self.mu_real = np.mean(activations_real, axis=0)
+            self.sigma_real = np.cov(activations_real, rowvar=False)
+            # clean up the real samples
+            del samples_real, activations_real
+        
+        # get the mu and sigma values for generated images
+        samples_generated = np.array([])
+        # generate samples to calculate the FID score
+        while samples_generated.shape[0] < sample_count:
+            noise = tf.random.normal([batch_size, self.model.latent_dim])
+            labels = tf.random.uniform([batch_size], minval=0, maxval=num_classes, dtype=tf.int32)
+            batch_generated = self.model.generator([noise, labels], training=False)
+            if samples_generated.shape[0] == 0:
+                samples_generated = batch_generated
+            else:
+                samples_generated = np.concatenate((samples_generated, batch_generated), axis=0)
+        # cap the number of samples to and convert the list to a numpy array
+        samples_generated = np.array(samples_generated[:sample_count])
+        # preprocess the generated samples for the InceptionV3 model
+        samples_generated = self._preprocess_MNIST_for_FID(samples_generated)
+        # get the activations for the generated samples
+        activations_generated = self._get_inception_activations_for_FID(samples_generated, batch_size=batch_size)
+        # calculate the mu and sigma values for the generated samples
+        mu_generated = np.mean(activations_generated, axis=0)
+        sigma_generated = np.cov(activations_generated, rowvar=False)
+        # clean up the generated samples
+        del samples_generated, activations_generated
+        
+        # calculate the FID score
+        fid = self._calculate_fid(self.mu_real, self.sigma_real, mu_generated, sigma_generated)
+        
+        # update the last row of the metrics dataframe with the correct value for the FID score
+        self.metrics_dataframe.iloc[-1, self.metrics_dataframe.columns.get_loc("FID_score")] = fid
+        
+        ######################################################### create plot for FID score ##########################################################
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        epochs = self.metrics_dataframe['epoch']
+        ax1.plot(epochs, self.metrics_dataframe["FID_score"], label="FID Score", zorder=1, color='#1F77B4')
+        
+        # add vertical lines for model loading events with a single label for legend
+        model_load_indices = self.metrics_dataframe.loc[self.metrics_dataframe['model_loaded'], 'epoch']
+        for i, model_load_epoch in enumerate(model_load_indices):
+            if i == 0:
+                line_label = "ckpt loaded"
+            else:
+                line_label = ""
+            ax1.axvline(x=model_load_epoch, color='#5C5C5C', linestyle='--', alpha=0.7, linewidth=1.5, label=line_label, zorder=-1)
+            # add text to show the epoch after the model was loaded
+            y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.02) + ax1.get_ylim()[0]
+            ax1.text(model_load_epoch, y_text_position, f"{model_load_epoch:,}", color='#5C5C5C', fontsize=9, rotation=90, va='bottom', ha='right',
+                    zorder=2)
+        
+        # find the epoch where the minimum FID score occurred
+        min_fid_epoch = self.metrics_dataframe["FID_score"].idxmin() + 1  # +1 because the index starts from 0 and epoch starts from 1
+        
+        # Plot a vertical line at the epoch with the minimum FID score
+        ax1.axvline(x=min_fid_epoch, color='black', linestyle='-', linewidth=1.5, label='Minimum FID', zorder=-1)
+        
+        # Add text annotation for the minimum line
+        y_text_position = ((ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.25) + ax1.get_ylim()[0]
+        x_text_position = min_fid_epoch + (ax1.get_xlim()[1] - ax1.get_xlim()[0]) * 0.007
+        ax1.text(x_text_position, y_text_position, f"  Min FID at Epoch {min_fid_epoch:,}", color='black', fontsize=9, rotation=90,
+                va='bottom', ha='left', zorder=2)
+        
+        # add text to the plot to show the number of samples trained on at the end of the last epoch
+        plt.text(0.86, 1.02, f"Samples Trained On: {self.metrics_dataframe['samples_trained_on'].iloc[-1]:,}", fontsize=9, ha='center', va='center',
+                transform=plt.gca().transAxes)
+        
+        # add text to the plot to show the minimum FID score
+        plt.text(0.86, 1.06, f"Minimum FID Score: {fid:.3f}", fontsize=9, ha='center', va='center', transform=plt.gca().transAxes)
+        
+        ax1.set_xlabel("Epoch")
+        ax1.set_ylabel("FID Score")
+        ax1.legend()
+        ax1.grid(True, alpha=0.4)
+        plt.title("FID Score vs. Epoch", fontsize=18, loc='left')
+        
+        # Save the FID score plot to the current epoch checkpoint directory
+        plot_path = self.this_epoch_checkpoint_dir.joinpath("FID_score.png")
+        plt.savefig(plot_path, dpi=100)
+        shutil.copy(plot_path, self.model_training_output_dir.joinpath("FID_score.png"))
+        plt.close()
+        plt.clf()
         return
+    
+    def _preprocess_MNIST_for_FID(self, images):
+        """
+        Convert grayscale images to RGB and resize them to 299x299 for the InceptionV3 model so we can calculate the FID score.
+        
+        args:
+            images: a numpy array of MNIST images with shape (num_images, height, width, channels) with 1 channel (grayscale)
+        
+        returns:
+            preprocessed_images: a numpy array of RGB images with shape (num_images, 299, 299, 3)
+        """
+        # Convert grayscale images to RGB by repeating the single channel 3 times
+        preprocessed_images = np.repeat(images, 3, axis=-1)
+        # Resize images to 299x299
+        preprocessed_images = np.array([keras.preprocessing.image.smart_resize(image, (299, 299)) for image in preprocessed_images])
+        # use built-in preprocessing for InceptionV3 model
+        preprocessed_images = keras.applications.inception_v3.preprocess_input(preprocessed_images)
+        return preprocessed_images
+    
+    def _get_inception_activations_for_FID(self, images, batch_size=256):
+        """
+        Get the activations of the InceptionV3 model for a set of images.
+        
+        args:
+            images: a numpy array of RGB images with shape (num_images, 299, 299, 3)
+            batch_size: the batch size to use for calculating the activations
+        
+        returns:
+            activations: a numpy array of the activations for the images with shape (num_images, 2048)
+        """
+        activations = []
+        n_images = images.shape[0]
+        for start in range(0, n_images, batch_size):
+            end = min(start + batch_size, n_images)
+            batch = images[start:end]
+            activations.append(self.inception_model.predict(batch, verbose=0))
+        activations = np.concatenate(activations, axis=0)
+        return activations
+    
+    def _calculate_fid(self, mu1, sigma1, mu2, sigma2):
+        """
+        Compute the Fréchet Inception Distance (FID) between two multivariate Gaussians 
+        with means mu1, mu2 and covariances sigma1, sigma2:
+        
+            FID = ||mu1 - mu2||^2 + Tr(sigma1 + sigma2 - 2*sqrt(sigma1*sigma2))
+        """
+        # Difference of means
+        diff = mu1 - mu2
+        diff_squared = diff.dot(diff)
+        
+        # Product of covariances (sqrtm)
+        covmean, _ = scipy.linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+        
+        # Numerical stability: if imaginary components remain, take real part
+        if np.iscomplexobj(covmean):
+            covmean = covmean.real
+        
+        fid = diff_squared + np.trace(sigma1 + sigma2 - 2.0 * covmean)
+        return fid
     
     def plot_epoch_duration_and_estimate_train_time(self):
         """
