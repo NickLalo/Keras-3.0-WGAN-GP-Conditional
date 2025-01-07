@@ -33,6 +33,7 @@ dependencies:
       # - jax[cuda12]
       # - jaxlib
       - keras
+      - keras-cv
       - pyyaml
       - mlflow
       - tqdm
