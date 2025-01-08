@@ -245,6 +245,12 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             # Generate a video of all the saved images
             self.generate_video_of_validation_samples()
         
+        # if we haven't calculated the FID score between the real and generated images at the end of the last epoch and the FID_score_frequency is
+        # greater than 0, calculate it now.
+        if self.FID_score_frequency > 0 and self.current_epoch % self.FID_score_frequency != 0:
+            # calculate the FID score between the real and generated images
+            self.calculate_FID_score()
+        
         # print out a message to the console to indicate that the training has ended
         print(f"{'#'*64} MODEL TRAINING ENDED {'#'*64}\n")
         return
@@ -871,18 +877,15 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         ax1.text(x_text_position, y_text_position, f"  Min FID at Epoch {min_fid_epoch:,}", color='black', fontsize=9, rotation=90,
                 va='bottom', ha='left', zorder=2)
         
-        # add text to the plot to show the number of samples trained on at the end of the last epoch
-        plt.text(0.86, 1.02, f"Samples Trained On: {self.metrics_dataframe['samples_trained_on'].iloc[-1]:,}", fontsize=9, ha='center', va='center',
-                transform=plt.gca().transAxes)
-        
         # add text to the plot to show the minimum FID score
-        plt.text(0.86, 1.06, f"Minimum FID Score: {fid:.3f}", fontsize=9, ha='center', va='center', transform=plt.gca().transAxes)
+        plt.text(0.88, 1.02, f"Minimum FID Score: {fid:.3f} at Epoch {min_fid_epoch}", fontsize=9, ha='center', va='center', transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
         ax1.set_ylabel("FID Score")
         ax1.legend()
         ax1.grid(True, alpha=0.4)
         plt.title("FID Score vs. Epoch", fontsize=18, loc='left')
+        plt.tight_layout()
         
         # Save the FID score plot to the current epoch checkpoint directory
         plot_path = self.this_epoch_checkpoint_dir.joinpath("FID_score.png")
