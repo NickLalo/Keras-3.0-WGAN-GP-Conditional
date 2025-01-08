@@ -794,7 +794,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         # hardcoded number of classes for the MNIST dataset
         num_classes = 10
         # number of samples to generate for the FID score calculation
-        sample_count = 500  # 10_000
+        sample_count = 10_000
         
         # get the mu and sigma values for real images if they haven't been calculated yet
         if self.mu_real is None or self.sigma_real is None:
