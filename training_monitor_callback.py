@@ -383,7 +383,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                         ha='right', zorder=2)
             
             # add text to the plot to show the number of samples trained on at the end of the last epoch
-            plt.text(0.86, 1.012, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
+            plt.text(0.86, 1.02, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
                     transform=plt.gca().transAxes)
             
             ax1.set_xlabel("Epoch")
@@ -426,7 +426,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                     zorder=2)
         
         # add text to the plot to show the number of samples trained on at the end of the last epoch
-        plt.text(0.86, 1.012, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
+        plt.text(0.86, 1.02, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
                 transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
@@ -484,7 +484,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 va='bottom', ha='left',zorder=2)
         
         # add text to the plot to show the number of samples trained on at the end of the last epoch
-        plt.text(0.86, 1.028, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
+        plt.text(0.86, 1.02, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
                 transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
@@ -532,7 +532,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                             ha='right', zorder=2)
             
             # add text to the plot to show the number of samples trained on at the end of the last epoch
-            plt.text(0.86, 1.028, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
+            plt.text(0.86, 1.02, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center',
                     transform=plt.gca().transAxes)
             
             axs[0].legend()
@@ -572,7 +572,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                     zorder=2)
         
         # add text to the plot to show the number of samples trained on at the end of the last epoch
-        plt.text(0.86, 1.012, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
+        plt.text(0.86, 1.02, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
                 transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
@@ -605,7 +605,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                     zorder=2)
         
         # add text to the plot to show the number of samples trained on at the end of the last epoch
-        plt.text(0.86, 1.012, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
+        plt.text(0.86, 1.02, f"Samples Trained On: {samples_trained.iloc[-1]:,}", fontsize=9, ha='center', va='center', 
                 transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
