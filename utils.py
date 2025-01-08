@@ -106,13 +106,14 @@ def parse_arguments():
     ##################################################### model, video, and FID score frequency ######################################################
     # model_save_frequency
     parser.add_argument("--model_save_frequency", type=int, default=10,
-        help="The frequency of saving the model.")
+        help="The frequency of saving the model. If set to 0, the model is only saved at the end of training.")
     # video_of_validation_frequency
     parser.add_argument("--video_of_validation_frequency", type=int, default=1,
-        help="The frequency of creating a video of the validation samples.")
+        help="The frequency of creating a video of the validation samples., If set to 0, a video is only created at the end of training.")
     # FID_score_frequency
-    parser.add_argument("--FID_score_frequency", type=int, default=10,
-        help="The frequency of calculating the FID score. Defaults to 0 (no FID score calculation) because it is computationally expensive.")
+    parser.add_argument("--FID_score_frequency", type=int, default=0,
+        help="The frequency of calculating the FID score. Defaults to 0 (no FID score calculation) because it is computationally expensive. "
+            "When set to 0, the FID score is never calculated.")
     
     ############################################################### validate arguments ###############################################################
     # Parse arguments
