@@ -10,6 +10,8 @@ import keras
 import tensorflow as tf
 import warnings
 
+from load_data import AdaptiveAugmentor
+
 
 # choose to ignore the specific warning for loading optimizers as our WGAN_GP class handles this in the compile_from_config method. This method 
 # may not perfectly recreate the optimizers, but it doesn't seem to cause any issues in testing so far.
@@ -90,6 +92,14 @@ class WGAN_GP(keras.Model):
         self.num_critic_steps = critic_extra_steps
         # the weight of the gradient penalty term in the critic loss
         self.gp_weight = gp_weight
+        
+        # Initialize AdaptiveAugmentor to use in the training step
+        self.augmentor = AdaptiveAugmentor(
+            initial_strength=1.0,
+            min_strength=0.5,
+            max_strength=250.0,
+            alpha=0.05,
+        )
         
         # set dummy value for self.optimizer avoid errors at the end of .fit() call because we are using a custom training loop
         self.optimizer = None
@@ -176,9 +186,13 @@ class WGAN_GP(keras.Model):
                 # Generate fake images using the real labels for training the critic
                 fake_images = self.generator([random_latent_vectors, real_labels], training=True)
                 
+                # Apply the adaptive augmentor to the real and fake images
+                augmented_fake_images = self.augmentor.apply_augmentations_adaptive(fake_images)
+                augmented_real_images = self.augmentor.apply_augmentations_adaptive(real_images)
+                
                 # Get the critic scores (logits) for the fake and real images
-                fake_logits = self.critic([fake_images, real_labels], training=True)
-                real_logits = self.critic([real_images, real_labels], training=True)
+                fake_logits = self.critic([augmented_fake_images, real_labels], training=True)
+                real_logits = self.critic([augmented_real_images, real_labels], training=True)
                 
                 # Append the mean scores to track them
                 critic_real_scores.append(tf.reduce_mean(real_logits))
@@ -188,7 +202,7 @@ class WGAN_GP(keras.Model):
                 critic_wasserstein_loss = tf.reduce_mean(fake_logits) - tf.reduce_mean(real_logits)
                 
                 # Calculate the gradient penalty
-                gp = self.gradient_penalty(batch_size, real_images, fake_images, real_labels)
+                gp = self.gradient_penalty(batch_size, augmented_real_images, augmented_fake_images, real_labels)
                 
                 # Add the gradient penalty to the critic loss
                 critic_loss = critic_wasserstein_loss + gp * self.gp_weight
@@ -201,6 +215,9 @@ class WGAN_GP(keras.Model):
             critic_gradient = tape.gradient(critic_loss, self.critic.trainable_variables)
             # Update the critic's weights
             self.critic_optimizer.apply_gradients(zip(critic_gradient, self.critic.trainable_variables))
+            
+            # Update the augmentor's strength based on the critic loss
+            self.augmentor.update_strength(critic_loss)
             
             # consider resampling the dataset to get a new batch of real images and labels here to avoid training on the same batch
             #         multiple times. This could be achieved by making a copy of the dataset a class attribute.
@@ -215,8 +232,11 @@ class WGAN_GP(keras.Model):
             # Generate fake images using real labels for training the generator
             generated_images = self.generator([random_latent_vectors, real_labels], training=True)
             
+            # Apply adaptive augmentations to the generated images
+            augmented_generated_images = self.augmentor.apply_augmentations_adaptive(generated_images)
+            
             # Get the critic scores (logits) for the generated images
-            gen_img_logits = self.critic([generated_images, real_labels], training=True)
+            gen_img_logits = self.critic([augmented_generated_images, real_labels], training=True)
             
             # Calculate the generator loss
             gen_loss = -tf.reduce_mean(gen_img_logits)
@@ -238,6 +258,7 @@ class WGAN_GP(keras.Model):
             "critic_loss_real": avg_real_score,
             "critic_loss_fake": avg_fake_score,
             "gradient_penalty": avg_gradient_penalty,
+            "augmentation_strength": self.augmentor.augmentation_strength,
             }
         
         return return_dict
@@ -271,6 +292,11 @@ class WGAN_GP(keras.Model):
             "learning_rate_decay": self.learning_rate_decay,
             "min_critic_learning_rate": self.min_critic_learning_rate,
             "min_generator_learning_rate": self.min_generator_learning_rate,
+            # save augmentor parameters
+            "augmentor_initial_strength": self.augmentor.augmentation_strength.numpy(),
+            "augmentor_min_strength": self.augmentor.min_strength,
+            "augmentor_max_strength": self.augmentor.max_strength,
+            "augmentor_alpha": self.augmentor.alpha,
         }
         
         # combine the two configurations
@@ -317,6 +343,11 @@ class WGAN_GP(keras.Model):
         min_generator_learning_rate = config.pop("min_generator_learning_rate")
         critic_extra_steps = config.pop("critic_extra_steps")
         gp_weight = config.pop("gp_weight")
+        # get augmentor configurations
+        augmentor_initial_strength = config.pop("augmentor_initial_strength")
+        augmentor_min_strength = config.pop("augmentor_min_strength")
+        augmentor_max_strength = config.pop("augmentor_max_strength")
+        augmentor_alpha = config.pop("augmentor_alpha")
         
         # create a new instance of the model with the critic and generator models (This calls the __init__ method)
         model = cls(
@@ -331,6 +362,12 @@ class WGAN_GP(keras.Model):
             min_generator_learning_rate=min_generator_learning_rate,
             critic_extra_steps=critic_extra_steps,
                     gp_weight=gp_weight)
+        
+        # restore the augmentor parameters
+        model.augmentor.augmentation_strength.assign(augmentor_initial_strength)
+        model.augmentor.min_strength = augmentor_min_strength
+        model.augmentor.max_strength = augmentor_max_strength
+        model.augmentor.alpha = augmentor_alpha
         return model
     
     def compile_from_config(self, config):

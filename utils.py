@@ -58,15 +58,6 @@ def parse_arguments():
     # dataset_subset_percentage
     parser.add_argument("--dataset_subset_percentage", type=float, default=1.0,
         help="The percentage of the dataset to use for training in small subset mode. Cannot be set with debug_run.")
-    # random_shift_frequency
-    parser.add_argument("--random_rotate_frequency", type=float, default=0.0,
-        help="The frequency of applying random rotations to the training images. e.g. 0.5 means 50% of the time.")
-    # random_translate_frequency
-    parser.add_argument("--random_translate_frequency", type=float, default=0.0,
-        help="The frequency of applying random translations to the training images. e.g. 0.5 means 50% of the time.")
-    # random_zoom_frequency
-    parser.add_argument("--random_zoom_frequency", type=float, default=0.0,
-        help="The frequency of applying random zooms to the training images. e.g. 0.5 means 50% of the time.")
     
     ########################################################## model and training arguments ##########################################################
     # noise_shape
@@ -91,7 +82,7 @@ def parse_arguments():
     parser.add_argument("--initial_generator_learning_rate", type=float, default=1e-4,
         help="The initial learning rate for the model training.")
     # learning_rate_warmup_epochs
-    parser.add_argument("--learning_rate_warmup_epochs", type=int, default=50,
+    parser.add_argument("--learning_rate_warmup_epochs", type=int, default=9999,
         help="The number of epochs to warm up the learning rate.")
     # learning_rate_decay
     parser.add_argument("--learning_rate_decay", type=float, default=0.99,
@@ -105,14 +96,15 @@ def parse_arguments():
     
     ##################################################### model, video, and FID score frequency ######################################################
     # model_save_frequency
-    parser.add_argument("--model_save_frequency", type=int, default=10,
-        help="The frequency of saving the model.")
+    parser.add_argument("--model_save_frequency", type=int, default=0,
+        help="The frequency of saving the model. If set to 0, the model is only saved at the end of training.")
     # video_of_validation_frequency
-    parser.add_argument("--video_of_validation_frequency", type=int, default=1,
-        help="The frequency of creating a video of the validation samples.")
+    parser.add_argument("--video_of_validation_frequency", type=int, default=10,
+        help="The frequency of creating a video of the validation samples., If set to 0, a video is only created at the end of training.")
     # FID_score_frequency
-    parser.add_argument("--FID_score_frequency", type=int, default=10,
-        help="The frequency of calculating the FID score. Defaults to 0 (no FID score calculation) because it is computationally expensive.")
+    parser.add_argument("--FID_score_frequency", type=int, default=2,
+        help="The frequency of calculating the FID score. Defaults to 0 (no FID score calculation) because it is computationally expensive. "
+            "When set to 0, the FID score is never calculated.")
     
     ############################################################### validate arguments ###############################################################
     # Parse arguments
@@ -128,14 +120,6 @@ def parse_arguments():
     # ensure that debug_run and a non 1.0 dataset_subset_percentage are not set together
     if args.debug_run and args.dataset_subset_percentage != 1.0:
         raise ValueError("debug_run and a dataset_subset_percentage other than 1.0 cannot be set together.")
-    
-    # ensure that the random augmentations are between 0 and 1.0
-    if args.random_rotate_frequency < 0 or args.random_rotate_frequency > 1.0:
-        raise ValueError("random_rotate_frequency must be between 0 and 1.0.")
-    if args.random_translate_frequency < 0 or args.random_translate_frequency > 1.0:
-        raise ValueError("random_translate_frequency must be between 0 and 1.0.")
-    if args.random_zoom_frequency < 0 or args.random_zoom_frequency > 1.0:
-        raise ValueError("random_zoom_frequency must be between 0 and 1.0.")
     
     # Convert args namespace to dictionary
     training_params = vars(args)

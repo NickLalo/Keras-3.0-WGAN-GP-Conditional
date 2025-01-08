@@ -52,33 +52,28 @@ class DataAugmentor:
             fill_value=-1.0,
         )
     
-    def apply_keras_cv_layer(self, image, layer):
+    def apply_keras_cv_layer(self, images, layer):
         """
-        Internal helper to apply a KerasCV layer to a single image (H, W, C).
-        KerasCV expects (batch, H, W, C), and might produce float16 under a
-        mixed_float16 policy. The result back to float32 to avoid errors.
+        Internal helper to apply a KerasCV layer to a batch of images (batch_size, H, W, C).
+        KerasCV expects (batch_size, H, W, C).
         
         Parameters: 
-            image: tf.Tensor, shape (H, W, C)
+            images: tf.Tensor, shape (batch_size, H, W, C)
             layer: KerasCV layer object
         
         Returns:
-            Augmented image as tf.Tensor, shape (H, W, C), float32
+            Augmented images as tf.Tensor, shape (batch_size, H, W, C), float16
         """
         # Cast input to float32 for augmentation
-        image_32 = tf.cast(image, tf.float32)
-        
-        # Expand dims to (1, H, W, C)
-        image_batched = tf.expand_dims(image_32, axis=0)
+        images_32 = tf.cast(images, tf.float32)
         
         # Apply augmentation
-        augmented_batched = layer(image_batched, training=True)
+        augmented_batched = layer(images_32, training=True)
         
-        # Squeeze back to (H, W, C)
-        augmented = tf.squeeze(augmented_batched, axis=0)
+        # Cast back to float16 to match mixed precision policy
+        augmented_batched = tf.cast(augmented_batched, tf.float16)
         
-        # Force final output to float32
-        return tf.cast(augmented, tf.float32)
+        return augmented_batched
     
     def map_data_random_rotation(self, image, label, random_decision):
         """
@@ -150,13 +145,93 @@ class DataAugmentor:
         return image_final, label
 
 
-def load_mnist_data_for_gan(augmentor: DataAugmentor,
-                            debug_run: bool=False,
+class AdaptiveAugmentor(DataAugmentor):
+    """
+    Extends DataAugmentor to adjust augmentation strength based on critic loss.
+    """
+    def __init__(self, initial_strength=1.0, min_strength=0.5, max_strength=2.0, alpha=0.1):
+        """
+        Initialize the AdaptiveAugmentor.
+        
+        Parameters:
+            initial_strength (float): Starting augmentation strength factor.
+            min_strength (float): Minimum augmentation strength.
+            max_strength (float): Maximum augmentation strength.
+            alpha (float): Learning rate for strength adjustment.
+        """
+        super().__init__()
+        # Set augmentation_strength to float16
+        self.augmentation_strength = tf.Variable(
+            initial_strength, 
+            trainable=False, 
+            dtype=tf.float16
+        )
+        self.min_strength = min_strength
+        self.max_strength = max_strength
+        # Convert alpha to float16
+        self.alpha = tf.constant(alpha, dtype=tf.float16)  # Learning rate as float16
+    
+    def update_strength(self, critic_loss, target_loss=0.0):
+        """
+        Update the augmentation strength based on critic loss.
+        
+        Parameters:
+            critic_loss (float): Current critic loss.
+            target_loss (float): Desired critic loss (default is 0.0 for WGAN).
+        """
+        # Compute error and cast to float16
+        error = tf.cast(target_loss - critic_loss, tf.float16)  # Ensure error is float16
+        
+        # Compute new_strength as float16 + float16 * float16 = float16
+        new_strength = self.augmentation_strength + self.alpha * error
+        
+        # Clamp the strength to [min_strength, max_strength], both cast to float16
+        min_strength = tf.constant(self.min_strength, dtype=tf.float16)
+        max_strength = tf.constant(self.max_strength, dtype=tf.float16)
+        new_strength = tf.clip_by_value(new_strength, min_strength, max_strength)
+        
+        # Assign the new strength
+        self.augmentation_strength.assign(new_strength)
+    
+    def apply_augmentations_adaptive(self, images):
+        """
+        Apply augmentations with adaptive strength by blending augmented and original images.
+        
+        Parameters:
+            images (tf.Tensor): Input image tensor of shape (batch_size, H, W, C).
+        
+        Returns:
+            tf.Tensor: Augmented image tensor.
+        """
+        # Cast images to float16 to ensure dtype consistency
+        images = tf.cast(images, tf.float16)
+        
+        # Apply fixed augmentations
+        augmented_images = self.apply_keras_cv_layer(images, self.random_rotation_layer)
+        augmented_images = self.apply_keras_cv_layer(augmented_images, self.random_translation_layer)
+        augmented_images = self.apply_keras_cv_layer(augmented_images, self.random_zoom_layer)
+        
+        # Normalize strength to [0, 1]
+        normalized_strength = (self.augmentation_strength - self.min_strength) / (self.max_strength - self.min_strength)
+        normalized_strength = tf.clip_by_value(normalized_strength, 0.0, 1.0)
+        
+        # Reshape to (1, 1, 1, 1) to broadcast across the batch
+        normalized_strength = tf.reshape(normalized_strength, [1, 1, 1, 1])
+        
+        # Cast normalized_strength to float16 to match augmented_images and images
+        normalized_strength = tf.cast(normalized_strength, tf.float16)
+        
+        # Create a float16 constant for 1.0
+        one_float16 = tf.constant(1.0, dtype=tf.float16)
+        
+        # Blend augmented and original images based on normalized_strength
+        final_images = normalized_strength * augmented_images + (one_float16 - normalized_strength) * images
+        return final_images
+
+
+def load_mnist_data_for_gan(debug_run: bool=False,
                             dataset_subset_percentage: float=1.0,
                             batch_size: int=512,
-                            random_rotate_frequency: float=0.0,
-                            random_translate_frequency: float=0.0,
-                            random_zoom_frequency: float=0.0,
                             verbose: bool=True):
     """
     Load the MNIST dataset and return the training images and labels in a format tailored for training a GAN. Augmentations (rotation, translation, 
@@ -216,26 +291,7 @@ def load_mnist_data_for_gan(augmentor: DataAugmentor,
     # 5) Create Dataset
     train_dataset = tf.data.Dataset.from_tensor_slices((train_images, train_labels))
     
-    # 6) Apply Augmentations
-    if random_rotate_frequency > 0:
-        def add_random_rotation(image, label):
-            random_decision = tf.random.uniform([], 0, 1) < random_rotate_frequency
-            return augmentor.map_data_random_rotation(image, label, random_decision)
-        train_dataset = train_dataset.map(add_random_rotation, num_parallel_calls=tf.data.AUTOTUNE)
-    
-    if random_translate_frequency > 0:
-        def add_random_translation(image, label):
-            random_decision = tf.random.uniform([], 0, 1) < random_translate_frequency
-            return augmentor.map_data_random_translation(image, label, random_decision)
-        train_dataset = train_dataset.map(add_random_translation, num_parallel_calls=tf.data.AUTOTUNE)
-    
-    if random_zoom_frequency > 0:
-        def add_random_zoom(image, label):
-            random_decision = tf.random.uniform([], 0, 1) < random_zoom_frequency
-            return augmentor.map_data_random_zoom(image, label, random_decision)
-        train_dataset = train_dataset.map(add_random_zoom, num_parallel_calls=tf.data.AUTOTUNE)
-    
-    # 7) Shuffle, batch, prefetch, cache
+    # 6) Shuffle, batch, prefetch, cache
     # NOTE: the buffer_size can be set to the length of the dataset, but this can cause significant overhead for visualizing the training samples
     # as well as training the model at the start of each epoch. A smaller buffer size was chosen to reduce this time which results in a non-perfectly
     # shuffled dataset that is still good enough for training.
@@ -250,7 +306,7 @@ def load_mnist_data_for_gan(augmentor: DataAugmentor,
         .cache()  # can only be used if the dataset fits in memory
     )
     
-    # 8) Get dataset information and print to console
+    # 7) Get dataset information and print to console
     samples_per_epoch = len(train_images)
     img_shape = train_dataset.element_spec[0].shape[1:]
     unique_labels = np.unique(train_labels)
@@ -264,9 +320,6 @@ def load_mnist_data_for_gan(augmentor: DataAugmentor,
         print(f"Shape of a single image: {img_shape}")
         print(f"Unique labels: {unique_labels}")
         print(f"Number of classes: {num_classes}")
-        print(f"random_rotate_frequency: {random_rotate_frequency}")
-        print(f"random_translate_frequency: {random_translate_frequency}")
-        print(f"random_zoom_frequency: {random_zoom_frequency}")
         print(f"{'#'*150}\n")
     
     return train_dataset, img_shape, num_classes, samples_per_epoch
