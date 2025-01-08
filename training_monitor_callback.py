@@ -849,8 +849,12 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         
         ######################################################### create plot for FID score ##########################################################
         fig, ax1 = plt.subplots(figsize=(10, 6))
-        epochs = self.metrics_dataframe['epoch']
-        ax1.plot(epochs, self.metrics_dataframe["FID_score"], label="FID Score", zorder=1, color='#1F77B4')
+        epochs = self.metrics_dataframe['epoch'].copy()
+        FID_scores = self.metrics_dataframe['FID_score'].copy()
+        # drop rows with zero values for plotting
+        epochs = epochs[FID_scores != 0]
+        FID_scores = FID_scores[FID_scores != 0]
+        ax1.plot(epochs, FID_scores, label="FID Score", zorder=1, color='#1F77B4')
         
         # add vertical lines for model loading events with a single label for legend
         model_load_indices = self.metrics_dataframe.loc[self.metrics_dataframe['model_loaded'], 'epoch']
@@ -866,7 +870,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                     zorder=2)
         
         # find the epoch where the minimum FID score occurred
-        min_fid_epoch = self.metrics_dataframe["FID_score"].idxmin() + 1  # +1 because the index starts from 0 and epoch starts from 1
+        min_fid_epoch = FID_scores.idxmin() + 1
+        min_fid_score = FID_scores.min()
         
         # Plot a vertical line at the epoch with the minimum FID score
         ax1.axvline(x=min_fid_epoch, color='black', linestyle='-', linewidth=1.5, label='Minimum FID', zorder=-1)
@@ -878,7 +883,7 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 va='bottom', ha='left', zorder=2)
         
         # add text to the plot to show the minimum FID score
-        plt.text(0.88, 1.02, f"Minimum FID Score: {fid:.3f} at Epoch {min_fid_epoch}", fontsize=9, ha='center', va='center', transform=plt.gca().transAxes)
+        plt.text(0.84, 1.02, f"Minimum FID Score: {min_fid_score:.3f} at Epoch {min_fid_epoch}", fontsize=9, ha='center', va='center', transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
         ax1.set_ylabel("FID Score")
