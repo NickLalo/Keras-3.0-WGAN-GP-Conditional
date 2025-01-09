@@ -1,5 +1,11 @@
 # Script to test out training of the WGAN-GP model
+# NOTE: run from the base directory of the project
 #!/bin/bash
+
+# if the parent dir of the current path is shell_scripts, then navigate one up to the base dir of the project
+if [[ $(basename $(dirname $(pwd))) == "shell_scripts" ]]; then
+    cd ..
+fi
 
 # Activate the Conda environment
 source ~/miniconda3/etc/profile.d/conda.sh

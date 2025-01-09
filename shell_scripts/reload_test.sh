@@ -1,7 +1,13 @@
 # Script to test out the training and reloading of the WGAN-GP model with a specific checkpoint. This can be modified to help pick up training
 # from a failed run. However, some of the epochs may need to be deleted so that the last epoch in the model_checkpoints directory has a 
 # model_save directory available for reloading.
+# NOTE: run from the base directory of the project
 #!/bin/bash
+
+# if the parent dir of the current path is shell_scripts, then navigate one up to the base dir of the project
+if [[ $(basename $(dirname $(pwd))) == "shell_scripts" ]]; then
+    cd ..
+fi
 
 # Activate the Conda environment
 source ~/miniconda3/etc/profile.d/conda.sh
