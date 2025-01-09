@@ -112,9 +112,9 @@ def parse_arguments():
     parser.add_argument("--video_of_validation_frequency", type=int, default=1,
         help="The frequency of creating a video of the validation samples., If set to 0, a video is only created at the end of training.")
     # FID_score_frequency
-    parser.add_argument("--FID_score_frequency", type=int, default=0,
-        help="The frequency of calculating the FID score. Defaults to 0 (no FID score calculation) because it is computationally expensive. "
-            "When set to 0, the FID score is never calculated.")
+    parser.add_argument("--FID_score_frequency", type=int, default=1,
+        help="The frequency of calculating the FID score. Defaults to 1, however, consider changing to 0 (no FID score computation) when initially"
+            "testing out ideas as this is computationally expensive.")
     
     ############################################################### validate arguments ###############################################################
     # Parse arguments
