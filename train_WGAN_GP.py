@@ -31,7 +31,7 @@ keras.mixed_precision.set_global_policy("mixed_float16")
 print("Mixed precision policy:", keras.mixed_precision.global_policy())
 
 from critic_and_generator_models import get_critic_model, get_generator_model
-from load_data import DataAugmentor, load_mnist_data_for_gan, visualize_training_samples
+from load_data import load_mnist_data_for_gan, visualize_training_samples
 from wgan_gp_model import WGAN_GP
 from training_monitor_callback import Training_Monitor
 from utils import parse_arguments, get_timestamp, Terminal_Logger, get_last_checkpoint_paths_for_reload, get_specific_checkpoint_paths_for_reload, \
@@ -82,11 +82,8 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         # last checkpoint dir set to None to indicate that we are not loading a model from a checkpoint
         last_checkpoint_dir_path = None
         
-        # Instantiate the DataAugmentor class to augment the training data (if set by cmd line arguments)
-        data_augmentor = DataAugmentor()
-        
         # Load the MNIST dataset for training a WGAN
-        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(data_augmentor, training_params["debug_run"], 
+        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
             training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_rotate_frequency"],
             training_params["random_translate_frequency"], training_params["random_zoom_frequency"])
         
@@ -144,11 +141,8 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         terminal_output_log_filename = model_training_output_dir.joinpath("_terminal_output_logs.txt")
         _ = Terminal_Logger(terminal_output_log_filename)  # don't need to save the logger object
         
-        # Instantiate the DataAugmentor class to augment the training data (if set by cmd line arguments)
-        data_augmentor = DataAugmentor()
-        
         # Load the MNIST dataset for training a WGAN
-        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(data_augmentor, training_params["debug_run"], 
+        train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(training_params["debug_run"], 
             training_params["dataset_subset_percentage"], training_params["batch_size"], training_params["random_rotate_frequency"], 
             training_params["random_translate_frequency"], training_params["random_zoom_frequency"])
         

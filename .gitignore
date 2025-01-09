@@ -1,5 +1,7 @@
 .vscode/
 __pycache__/
+condaenv.*
+
 
 # ignore all files and folders that start with zz_ (personal naming convention for temporary files)
 zz_*

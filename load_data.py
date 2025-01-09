@@ -150,8 +150,7 @@ class DataAugmentor:
         return image_final, label
 
 
-def load_mnist_data_for_gan(augmentor: DataAugmentor,
-                            debug_run: bool=False,
+def load_mnist_data_for_gan(debug_run: bool=False,
                             dataset_subset_percentage: float=1.0,
                             batch_size: int=512,
                             random_rotate_frequency: float=0.0,
@@ -216,7 +215,8 @@ def load_mnist_data_for_gan(augmentor: DataAugmentor,
     # 5) Create Dataset
     train_dataset = tf.data.Dataset.from_tensor_slices((train_images, train_labels))
     
-    # 6) Apply Augmentations
+    # 6) Add Augmentations to train_dataset for random augmentations during loading in the training loop
+    augmentor = DataAugmentor()  # instantiate the DataAugmentor class
     if random_rotate_frequency > 0:
         def add_random_rotation(image, label):
             random_decision = tf.random.uniform([], 0, 1) < random_rotate_frequency
