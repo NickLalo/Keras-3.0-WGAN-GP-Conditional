@@ -883,7 +883,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 va='bottom', ha='left', zorder=2)
         
         # add text to the plot to show the minimum FID score
-        plt.text(0.84, 1.02, f"Minimum FID Score: {min_fid_score:.3f} at Epoch {min_fid_epoch}", fontsize=9, ha='center', va='center', transform=plt.gca().transAxes)
+        plt.text(0.84, 1.02, f"Minimum FID Score: {min_fid_score:.3f} at Epoch {min_fid_epoch}", fontsize=9, ha='center', va='center', 
+                transform=plt.gca().transAxes)
         
         ax1.set_xlabel("Epoch")
         ax1.set_ylabel("FID Score")
@@ -898,6 +899,17 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         shutil.copy(plot_path, self.model_training_output_dir.joinpath("FID_score.png"))
         plt.close()
         plt.clf()
+        
+        ####################################################### save model on lowest FID score #######################################################
+        # if the FID score is the lowest so far and we are saving the model regularly, save the model if we are past 10 epochs and the model has not
+        # been saved this epoch
+        if (
+            self.current_epoch == min_fid_epoch  # if the current epoch is the epoch with the lowest FID score
+            and self.model_save_frequency > 0  # if we are saving the model regularly, 0 means we only save the model at the end of training
+            and self.current_epoch > 10  # if we are past 10 epochs
+            and self.current_epoch % self.model_save_frequency != 0):  # if this is an epoch where we have not yet saved the model
+            # Save the model
+            self.save_model_checkpoint()
         return
     
     def _preprocess_MNIST_for_FID(self, images):
