@@ -34,7 +34,7 @@ dependencies:
       # - jaxlib
       - keras
       - keras-cv
-      - cv2
+      - opencv-python
       - pyyaml
       - mlflow
       - tqdm
