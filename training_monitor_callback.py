@@ -987,13 +987,12 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.metrics_dataframe.to_csv(csv_save_path, index=False)
         
         ######################################### create plots for training and metric calculation durations #########################################
-        # Plot the time metric starting after the first epoch
         fig, ax1 = plt.subplots(figsize=(10, 6))
         epochs = self.metrics_dataframe['epoch']
-        ax1.bar(epochs[:], self.metrics_dataframe["epoch_train_time"], label="epoch_train_time".replace("_", " ").title(), zorder=1, 
-                color='#3B9DE3', edgecolor='black')
-        ax1.bar(epochs[:], self.metrics_dataframe["metric_calc_time"], label="metric_calc_time".replace("_", " ").title(), zorder=1,
-                color='#AE7E6F', edgecolor='black', bottom=self.metrics_dataframe["epoch_train_time"])
+        train_time = self.metrics_dataframe['epoch_train_time']
+        metric_time = self.metrics_dataframe['metric_calc_time']
+        ax1.bar(epochs, train_time, label="Epoch Train Time", zorder=1, color='#3B9DE3')
+        ax1.bar(epochs, metric_time, bottom=train_time, label="Metrics Calc Time", zorder=1, color='#AE7E6F')
         
         ax1.set_xlabel("Epoch")
         ax1.set_ylabel("Duration (s)")
@@ -1033,12 +1032,6 @@ class Training_Monitor(tf.keras.callbacks.Callback):
             file.write(f"Average Epoch Duration (HHH:MM:SS.ss): {avg_time}\n")
             file.write(f"Standard Deviation (HHH:MM:SS.ss): {stdev_time}\n")
             file.write(f"NOTE: this time includes the time spent training and logging metrics.\n")
-            """
-            NOTE: the average and standard deviations are calculated with the second 
-                epoch's time replacing the first epoch's time to not overstate the 
-                time spent on the first epoch where a long time is spent to setup 
-                the computation graph of the model.
-            """
             file.write(f"NOTE: the average and standard deviations are calculated with the second\n" \
                     f"\tepoch's time replacing the first epoch's time to not overstate the\n" \
                     f"\ttime spent on the first epoch where a long time is spent to setup\n" \
