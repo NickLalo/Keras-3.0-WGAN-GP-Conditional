@@ -7,6 +7,7 @@ import os
 import sys
 import io
 import time
+import yaml
 import shutil
 import traceback
 from pathlib import Path
@@ -147,6 +148,37 @@ def parse_arguments():
         training_params["epochs"] = 5
     
     return training_params
+
+
+def get_all_model_runs_dir():
+    """
+    Get all model runs directory path from _config/all_model_runs_dir.yaml. If the file does not exist, create it and with the all model runs 
+    directory set to the base directory of the project.
+    
+    NOTE: this file can be overwritten by the user to change the location of the all model runs directory.
+    use the format:
+    all_model_runs_dir: 'path/to/all_model_runs_dir'
+    
+    Parameters:
+        None
+    Returns:
+        all_model_runs_dir (Path): the path to the all model
+    """
+    # location where the path to the all model runs directory is stored
+    all_model_runs_yaml_path = Path("_configs/all_model_runs_dir.yaml")
+    
+    # if the yaml file does not exist, create it with the default location
+    if not all_model_runs_yaml_path.exists():
+        all_model_runs_yaml_path.write_text("all_model_runs_dir: 'wgan_gp_mnist_training_runs'")
+    
+    # read the path to the all model runs directory
+    all_model_runs_yaml = yaml.safe_load(all_model_runs_yaml_path.read_text())
+    all_model_runs_dir = Path(all_model_runs_yaml["all_model_runs_dir"])
+    
+    # if the directory does not exist, create it
+    if not all_model_runs_dir.exists():
+        all_model_runs_dir.mkdir()
+    return all_model_runs_dir
 
 
 def get_last_checkpoint_paths_for_reload(all_model_training_output_dir: Path):

@@ -1,6 +1,7 @@
 .vscode/
 __pycache__/
 condaenv.*
+all_model_runs_dir.yaml
 
 
 # ignore all files and folders that start with zz_ (personal naming convention for temporary files)

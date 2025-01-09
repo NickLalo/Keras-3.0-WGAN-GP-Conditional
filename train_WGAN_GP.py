@@ -34,8 +34,9 @@ from critic_and_generator_models import get_critic_model, get_generator_model
 from load_data import load_mnist_data_for_gan, visualize_training_samples
 from wgan_gp_model import WGAN_GP
 from training_monitor_callback import Training_Monitor
-from utils import parse_arguments, get_timestamp, Terminal_Logger, get_last_checkpoint_paths_for_reload, get_specific_checkpoint_paths_for_reload, \
-    print_and_save_training_parameters, print_script_execution_time, get_experiment_number, get_last_model_save_dir_path, backup_model_code
+from utils import parse_arguments, get_all_model_runs_dir, get_timestamp, Terminal_Logger, get_last_checkpoint_paths_for_reload, \
+    get_specific_checkpoint_paths_for_reload, print_and_save_training_parameters, print_script_execution_time, get_experiment_number, \
+    get_last_model_save_dir_path, backup_model_code
 
 
 # set a random seed for reproducibility for Tensorflow, Numpy, and Pythons
@@ -47,17 +48,13 @@ tf.config.experimental.enable_op_determinism()
 generator = tf.random.Generator.from_seed(seed)
 tf.random.set_global_generator(generator)
 
-# Hardcoded path to the directory containing all model training runs
-WGAN_GP_MNIST_MODELS_DIR = Path("wgan_gp_mnist_training_runs")
 
-
-def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
+def load_model_and_data(training_params):
     """
     Load the model and data for training the WGAN_GP model. The model is either created new one or loaded from a previous run's checkpoint.
     
     Parameters:
         training_params (dict): A dictionary containing the training parameters for the current run.
-        WGAN_GP_MNIST_MODELS_DIR (Path): The directory containing all the model training runs.
     
     Returns:
         wgan_gp (WGAN_GP): The WGAN_GP model for training.
@@ -67,11 +64,14 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         last_checkpoint_dir_path (Path): The directory path of the last checkpoint saved.
         num_classes (int): The number of classes in the dataset.
     """
+    # get the path to the directory containing all the model training runs. Setups a default directory if it doesn't exist
+    all_model_runs_dir = get_all_model_runs_dir()
+    
     if training_params["fresh_start"]:
         run_timestamp = get_timestamp()  # Get the current time in the US Central Time Zone
-        experiment_number = get_experiment_number(WGAN_GP_MNIST_MODELS_DIR)
+        experiment_number = get_experiment_number(all_model_runs_dir)
         this_training_run_dirname = f"{run_timestamp}__{experiment_number}"
-        model_training_output_dir = WGAN_GP_MNIST_MODELS_DIR.joinpath(this_training_run_dirname)
+        model_training_output_dir = all_model_runs_dir.joinpath(this_training_run_dirname)
         model_checkpoints_dir = model_training_output_dir.joinpath("model_checkpoints")
         os.makedirs(model_checkpoints_dir, exist_ok=True)  # includes the other directories in the path
         
@@ -125,7 +125,7 @@ def load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR):
         if training_params["reload_last_trained_model"]:
             # find the last model trained on to continue training
             last_model_training_run_dir, model_checkpoints_dir, last_checkpoint_dir_path, \
-                model_save_file_path = get_last_checkpoint_paths_for_reload(WGAN_GP_MNIST_MODELS_DIR)
+                model_save_file_path = get_last_checkpoint_paths_for_reload(all_model_runs_dir)
             
             # set the model training output directory to the last model training run directory
             model_training_output_dir = last_model_training_run_dir
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     
     # get the wgan_gp and training data. Model is either created new one or loaded from a previous run's checkpoint
     wgan_gp, train_dataset, model_training_output_dir, model_checkpoints_dir, last_checkpoint_dir_path, num_classes, samples_per_epoch \
-        = load_model_and_data(training_params, WGAN_GP_MNIST_MODELS_DIR)
+        = load_model_and_data(training_params)
     
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
