@@ -244,7 +244,7 @@ def load_mnist_data_for_gan(debug_run: bool=False,
         buffer_size = len(train_images)
     train_dataset = (
         train_dataset
-        .shuffle(buffer_size, seed=RANDOM_NUMBER_FOR_DATASET_SHUFFLE)
+        .shuffle(buffer_size)
         .batch(batch_size)
         .prefetch(tf.data.AUTOTUNE)
         .cache()  # can only be used if the dataset fits in memory
