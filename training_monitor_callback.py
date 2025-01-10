@@ -759,7 +759,6 @@ class Training_Monitor(tf.keras.callbacks.Callback):
                 # Resize the frame
                 resized_frame = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
                 video.write(resized_frame)
-                video.write(resized_frame)  # Duplicate frame to increase duration
             else:
                 print(f"Warning: Unable to read image {image_path}")
         
