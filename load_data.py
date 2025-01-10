@@ -364,12 +364,8 @@ def visualize_training_samples(train_dataset: tf.data.Dataset, model_training_ou
 
 
 if __name__ == "__main__":
-    # Instantiate the DataAugmentor class
-    augmentor = DataAugmentor()
-    
     # Load the MNIST data with augmentations
     train_dataset, img_shape, num_classes = load_mnist_data_for_gan(
-        augmentor=augmentor,
         debug_run=False,
         dataset_subset_percentage=1.0,
         batch_size=512,
