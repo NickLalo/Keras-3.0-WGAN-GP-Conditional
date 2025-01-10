@@ -253,6 +253,8 @@ def load_mnist_data_for_gan(debug_run: bool=False,
     # 8) Get dataset information and print to console
     samples_per_epoch = len(train_images)
     img_shape = train_dataset.element_spec[0].shape[1:]
+    img_dtype = train_dataset.element_spec[0].dtype
+    label_dtype = train_dataset.element_spec[1].dtype
     unique_labels = np.unique(train_labels)
     num_classes = len(unique_labels)
     
@@ -262,6 +264,8 @@ def load_mnist_data_for_gan(debug_run: bool=False,
         print(f"Value range in training dataset: [{np.min(train_images)}, {np.max(train_images)}]")
         print(f"Labels range: [{np.min(train_labels)}, {np.max(train_labels)}]")
         print(f"Shape of a single image: {img_shape}")
+        print(f"Image dtype: {img_dtype}")
+        print(f"Label dtype: {label_dtype}")
         print(f"Unique labels: {unique_labels}")
         print(f"Number of classes: {num_classes}")
         print(f"Batch size: {batch_size}")
