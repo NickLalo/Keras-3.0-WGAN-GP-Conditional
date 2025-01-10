@@ -264,6 +264,7 @@ def load_mnist_data_for_gan(debug_run: bool=False,
         print(f"Shape of a single image: {img_shape}")
         print(f"Unique labels: {unique_labels}")
         print(f"Number of classes: {num_classes}")
+        print(f"Batch size: {batch_size}")
         print(f"random_rotate_frequency: {random_rotate_frequency}")
         print(f"random_translate_frequency: {random_translate_frequency}")
         print(f"random_zoom_frequency: {random_zoom_frequency}")
