@@ -38,7 +38,7 @@ from utils import parse_arguments, get_all_model_runs_dir, get_timestamp, Termin
     get_last_model_save_dir_path, backup_model_code
 
 
-# set a random seed for reproducibility for Tensorflow, Numpy, and Pythons
+# set a random seed for reproducibility for Tensorflow, Numpy, and Python
 seed = 112
 keras.utils.set_random_seed(seed)
 # sets the graph-level deterministic operations for Tensorflow (can cause a training slowdown)

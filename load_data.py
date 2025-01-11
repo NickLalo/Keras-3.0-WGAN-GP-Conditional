@@ -296,10 +296,10 @@ def load_mnist_data_for_gan(debug_run: bool=False,
     label_dtype = train_dataset.element_spec[1].dtype
     unique_labels = np.unique(train_labels)
     num_classes = len(unique_labels)
-    # get the probability that at least one of the augmentations will be applied to a single image
-    random_augmentation_probability = (1 - (1 - random_rotate_frequency) * (1 - random_translate_frequency) * (1 - random_zoom_frequency)) * 100
-    # get the probability that all of the augmentations will be applied to a single image
-    random_augmentation_probability_all = (random_rotate_frequency * random_translate_frequency * random_zoom_frequency * 100)
+    # get the percentage chance that at least one of the augmentations will be applied to a single image
+    random_augmentation_percent = (1 - (1 - random_rotate_frequency) * (1 - random_translate_frequency) * (1 - random_zoom_frequency)) * 100
+    # get the percentage chance that all of the augmentations will be applied to a single image
+    random_augmentation_percent_all = (random_rotate_frequency * random_translate_frequency * random_zoom_frequency * 100)
     
     if verbose:
         print(f"\n{'#'*60} DATASET LOADED SUCCESSFULLY {'#'*61}")
@@ -315,8 +315,8 @@ def load_mnist_data_for_gan(debug_run: bool=False,
         print(f"random_rotate_frequency: {random_rotate_frequency}")
         print(f"random_translate_frequency: {random_translate_frequency}")
         print(f"random_zoom_frequency: {random_zoom_frequency}")
-        print(f"probability of at least one augmentation per sample: {random_augmentation_probability:.4f}")
-        print(f"probability of all augmentations per sample: {random_augmentation_probability_all:.4f}")
+        print(f"percent chance of at least one augmentation per sample: {random_augmentation_percent:.2f}%")
+        print(f"percent chance of all augmentations per sample: {random_augmentation_percent_all:.2f}%")
         print(f"{'#'*150}\n")
     
     return train_dataset, img_shape, num_classes, samples_per_epoch
