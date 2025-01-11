@@ -6,7 +6,6 @@ https://keras.io/examples/generative/wgan_gp/
 
 import os
 import time
-from pathlib import Path
 import numpy as np
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
