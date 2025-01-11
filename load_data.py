@@ -89,6 +89,7 @@ class DataAugmentor:
             fill_mode=self.fill_mode,
             fill_value=self.fill_value,
         )
+        return
     
     def apply_keras_cv_layer(self, image, layer):
         """
