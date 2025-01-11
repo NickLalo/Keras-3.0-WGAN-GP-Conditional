@@ -1,7 +1,10 @@
 """
-Script to hold functions to load data for the WGAN_GP model with KerasCV for random rotation, random translation, and random zoom augmentations.
-However, due to the small image size of MNIST, these augmentations cause modified images to look significantly different from the original images.
-Due to this limitation, these augmentations shouldn't be used for MNIST, but can be explored when working with larger image datasets.
+Script to hold functions to load data for the WGAN_GP model with KerasCV for random rotation, random translation, and random zoom augmentations. This
+code can be run in standalone mode to visualize a random selection of training samples with a higher frequency of random augmentations than is likely
+to be used in practice.
+
+NOTE: Due to the small image size of MNIST, these augmentations cause modified images to look significantly different from the original images.
+Because of this limitation, these augmentations shouldn't be used for MNIST, but can be explored when working with larger image datasets.
 
 One workaround worth exploring in the future to utilize the KerasCV augmentations is to adopt the method used in the Training Generative Adversarial 
 Networks with Limited Data paper by Karras et. al. (https://arxiv.org/abs/2006.06676). The method used excels at training a GAN with a small dataset
@@ -26,30 +29,65 @@ RANDOM_NUMBER_FOR_DATASET_SHUFFLE = random.randint(0, 1000)
 class DataAugmentor:
     """
     A class to encapsulate KerasCV augmentation layers and provide methods to apply them conditionally.
+    NOTE: uses hardcoded values for augmentation parameters for simplicity, but these could be modified to be passed as arguments.
     """
-    
     def __init__(self):
         """
         Initialize the augmentation layers.
         """
+        # decided fill mode and value for all augmentations
+        self.fill_mode = "constant"
+        self.fill_value = -1.0  # fill values with -1.0 (images are in [-1,1]). Useful when there is a mostly black background in the images.
+        # NOTE: choosing fill_mode of constant and fill_value of 1.0 can be a good way to very obviously see the applied augmentations when running
+        # this script in standalone mode.
+        
+        ########################################################### Rotation Augmentation ############################################################
+        # decide the range of rotation in degrees. For example, if a max_clockwise_rotation of 15 degrees and a max_counter_clockwise_rotation of 15
+        # degrees is chosen, the image is randomly rotated some amount up to either 15 degrees clockwise or 15 degrees counterclockwise. Specifying
+        # these values separately can be helpful if rotating in one direction is more likely than the other.
+        self.max_clockwise_rotation = 15 # degrees
+        self.max_counter_clockwise_rotation = 15 # degrees
+        
+        # Convert the rotation values to fractions of 2π radians for the KerasCV layer
+        # Degrees → Radians → Fraction of 2π
+        self.max_clockwise_rotation = -1 * self.max_clockwise_rotation / 360.0  # Negative for clockwise
+        self.max_counter_clockwise_rotation = self.max_counter_clockwise_rotation / 360.0  # Positive for counterclockwise
+        
+        # instantiate the KerasCV layer for random rotation
         self.random_rotation_layer = kcv.layers.RandomRotation(
-            factor=(5 / 180.0, 10 / 180.0),  # rotate between 5° to 10°
-            fill_mode="constant",
-            fill_value=-1.0,  # fill corners with -1.0 (images are in [-1,1])
+            factor=(self.max_clockwise_rotation, self.max_counter_clockwise_rotation),
+            fill_mode=self.fill_mode,
+            fill_value=self.fill_value,
         )
         
+        ########################################################## Translation Augmentation ##########################################################
+        # decide the range of translation factors in both directions as a percentage of the image size. For example, if 10% for vertical and 10% for
+        # horizontal is chosen, the image is randomly shifted some amount up to 10% of the image height and also up to 10% of the image width. The
+        # randomly chosen values are not the same for both directions resulting in non-uniform shifts.
+        self.vertical_shift_factor = 0.1  # percentage
+        self.horizontal_shift_factor = 0.1   # percentages
+        
+        # instantiate the KerasCV layer for random translation
         self.random_translation_layer = kcv.layers.RandomTranslation(
-            height_factor=0.1,  # up to 10% shift vertically
-            width_factor=0.1,   # up to 10% shift horizontally
-            fill_mode="constant",
-            fill_value=-1.0,
+            height_factor=self.vertical_shift_factor,
+            width_factor=self.horizontal_shift_factor,
+            fill_mode=self.fill_mode,
+            fill_value=self.fill_value,
         )
+        
+        ############################################################# Zoom Augmentation ##############################################################
+        # decide the range of zoom in/out factors in both directions as a percentage of the image size. For example, if 20% for vertical and 20% for
+        # horizontal is chosen, the image is randomly zoomed in or out some amount up to 20% of the image height and also up to 20% of the image width.
+        # The randomly chosen values are not the same for both directions resulting in non-uniform zooms which can make some images look stretched if 
+        # the zoom percentage is too high.
+        self.vertical_in_out_zoom = 0.1  # percentage
+        self.horizontal_in_out_zoom = 0.1  # percentage
         
         self.random_zoom_layer = kcv.layers.RandomZoom(
-            height_factor=(0.0, 0.2),  # up to 20% zoom in/out vertically
-            width_factor=(0.0, 0.2),   # up to 20% zoom in/out horizontally
-            fill_mode="constant",
-            fill_value=-1.0,
+            height_factor=self.vertical_in_out_zoom,
+            width_factor=self.horizontal_in_out_zoom,
+            fill_mode=self.fill_mode,
+            fill_value=self.fill_value,
         )
     
     def apply_keras_cv_layer(self, image, layer):
@@ -369,8 +407,12 @@ def visualize_training_samples(train_dataset: tf.data.Dataset, model_training_ou
 
 
 if __name__ == "__main__":
-    # Load the MNIST data with augmentations
-    train_dataset, img_shape, num_classes = load_mnist_data_for_gan(
+    # test to visualize a random selection of training samples with a higher frequency of random augmentations than is likely to be used in practice
+    # NOTE: for MNIST, these augmentations cause modified images to look significantly different from the original images. Because of this limitation,
+    # these augmentations shouldn't be used for MNIST, but can be explored when working with larger image datasets.
+    
+    # load the training dataset
+    train_dataset, img_shape, num_classes, samples_per_epoch = load_mnist_data_for_gan(
         debug_run=False,
         dataset_subset_percentage=1.0,
         batch_size=512,
