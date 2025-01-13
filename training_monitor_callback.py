@@ -70,6 +70,14 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.model_checkpoints_dir = model_checkpoints_dir
         self.this_epoch_checkpoint_dir = None  # the path to the current model checkpoint (will be set/updated in on_epoch_end)
         
+        # if it does not exist in the model_training_output_dir, create a _NOTES.txt file for writing notes about the model training run
+        notes_file_path = model_training_output_dir.joinpath("_NOTES.txt")
+        if not os.path.exists(notes_file_path):
+            with open(notes_file_path, "w") as file:
+                file.write(f"{'='*150}\n")
+                file.write(f"{' '*48}A place to write notes about this model training run.\n")
+                file.write(f"{'='*150}\n\n")
+        
         # parameters for logging the duration of model training and metric handling
         self.epoch_start_time = None
         self.epoch_train_duration = None
@@ -125,14 +133,6 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         else:  # create a new dataframe for tracking loss metrics for a fresh start
             self.metrics_dataframe = pd.DataFrame()  # empty dataframe placeholder that will be overwritten in log_loss_to_dataframe
             self.model_recently_loaded = False
-        
-        # if it does not exist in the model_training_output_dir, create a _NOTES.txt file for writing notes about the model training run
-        notes_file_path = model_training_output_dir.joinpath("_NOTES.txt")
-        if not os.path.exists(notes_file_path):
-            with open(notes_file_path, "w") as file:
-                file.write(f"{'='*150}\n")
-                file.write(f"{' '*48}A place to write notes about this model training run.\n")
-                file.write(f"{'='*150}\n\n")
         return
     
     def on_train_begin(self, logs=None):
