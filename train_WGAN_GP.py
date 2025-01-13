@@ -208,8 +208,8 @@ if __name__ == "__main__":
     
     # Initialize a custom training monitor callback to log info about the training process, save checkpoints, and generate validation samples
     training_monitor_callback = Training_Monitor(
-        model_training_output_dir,
-        model_checkpoints_dir,
+        model_training_output_dir=model_training_output_dir,
+        model_checkpoints_dir=model_checkpoints_dir,
         last_checkpoint_dir_path=last_checkpoint_dir_path,
         noise_dim=training_params["noise_shape"],
         train_dataset=train_dataset,
