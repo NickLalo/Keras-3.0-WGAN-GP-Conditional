@@ -130,9 +130,9 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         notes_file_path = model_training_output_dir.joinpath("_NOTES.txt")
         if not os.path.exists(notes_file_path):
             with open(notes_file_path, "w") as file:
-                file.write(f"{'='*140}\n")
-                file.write(f"{' '*43}A place to write notes about this model training run.\n")
-                file.write(f"{'='*140}\n\n")
+                file.write(f"{'='*150}\n")
+                file.write(f"{' '*48}A place to write notes about this model training run.\n")
+                file.write(f"{'='*150}\n\n")
         return
     
     def on_train_begin(self, logs=None):
