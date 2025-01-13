@@ -84,8 +84,8 @@ class Training_Monitor(tf.keras.callbacks.Callback):
         self.num_validation_samples = self.validation_sample_grid[0] * self.validation_sample_grid[1]
         # deterministically generate the random noise vectors for generating validation samples so that the same random noise vectors are used
         # every time the model is reloaded and across different runs.
-        generator = tf.random.Generator.from_seed(112)
-        self.random_noise_vectors = generator.normal(shape=(self.validation_sample_grid[0] * self.validation_sample_grid[1], self.noise_dim))
+        noise_generator = tf.random.Generator.from_seed(112)
+        self.random_noise_vectors = noise_generator.normal(shape=(self.validation_sample_grid[0] * self.validation_sample_grid[1], self.noise_dim))
         # generate sample labels for MNIST (0-9)
         self.validation_sample_labels = []
         for MNIST_label in range(self.validation_sample_grid[0]):  # loop through the number of labels
