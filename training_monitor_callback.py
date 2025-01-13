@@ -30,13 +30,13 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     Parameters to __init__:
         model_training_output_dir: str, the main directory to save outputs from the model training
         model_checkpoints_dir: str, the directory to save the model checkpoints and info at each epoch
-        noise_dim: int, the noise dimension of the generator
+        last_checkpoint_dir_path: str, the path to the last checkpoint directory if the model is being reloaded
+        noise_dim: int, the noise dimension of the generator model
+        train_dataset: tf.data.Dataset, the training dataset used to calculate the FID_score
+        samples_per_epoch: int, the number of samples in the training dataset
         model_save_frequency: int, the frequency (in epochs) to save the model
         video_of_validation_frequency: int, the frequency (in epochs) to generate a video of the validation samples
         FID_score_frequency: int, the frequency (in epochs) to calculate the FID score between the real and generated images
-        train_dataset: tf.data.Dataset, the training dataset used to calculate the FID_score_frequency
-        samples_per_epoch: int, the number of samples in the training dataset
-        last_checkpoint_dir_path: str, the path to the last checkpoint directory if the model is being reloaded
     
     Methods:
         __init__: Initializes the Training_Monitor object
@@ -58,13 +58,13 @@ class Training_Monitor(tf.keras.callbacks.Callback):
     def __init__(self,
                 model_training_output_dir,
                 model_checkpoints_dir,
+                last_checkpoint_dir_path,
                 noise_dim,
-                model_save_frequency=5,
-                video_of_validation_frequency=5,
-                FID_score_frequency=0,
-                train_dataset=None,
-                samples_per_epoch=None,
-                last_checkpoint_dir_path=None
+                train_dataset,
+                samples_per_epoch,
+                model_save_frequency,
+                video_of_validation_frequency,
+                FID_score_frequency,
                 ):
         self.model_training_output_dir = model_training_output_dir
         self.model_checkpoints_dir = model_checkpoints_dir

@@ -78,7 +78,7 @@ def load_model_and_data(training_params):
         terminal_output_log_filename = model_training_output_dir.joinpath("_terminal_output_logs.txt")
         _ = Terminal_Logger(terminal_output_log_filename)  # don't need to save the logger object
         
-        # last checkpoint dir set to None to indicate that we are not loading a model from a checkpoint
+        # last checkpoint dir set to None to indicate that we are not loading a model from a checkpoint to the Training_Monitor
         last_checkpoint_dir_path = None
         
         # Load the MNIST dataset for training a WGAN
@@ -210,13 +210,13 @@ if __name__ == "__main__":
     training_monitor_callback = Training_Monitor(
         model_training_output_dir,
         model_checkpoints_dir,
+        last_checkpoint_dir_path=last_checkpoint_dir_path,
         noise_dim=training_params["noise_shape"],
+        train_dataset=train_dataset,
+        samples_per_epoch=samples_per_epoch,
         model_save_frequency=training_params["model_save_frequency"],
         video_of_validation_frequency=training_params["video_of_validation_frequency"],
         FID_score_frequency=training_params["FID_score_frequency"],
-        train_dataset=train_dataset,
-        samples_per_epoch=samples_per_epoch,
-        last_checkpoint_dir_path=last_checkpoint_dir_path
         )
     
     # Start training
