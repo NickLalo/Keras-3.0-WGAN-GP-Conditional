@@ -173,11 +173,9 @@ def get_generator_model(noise_dim: int, num_classes: int, model_training_output_
     
     shortcut = x
     x = layers.Conv2D(filters=64, kernel_size=(3, 3), padding="same", use_bias=False)(x)
-    x = layers.BatchNormalization()(x)
     x = layers.LeakyReLU(0.2)(x)
     
     x = layers.Conv2D(filters=64, kernel_size=(3, 3), padding="same", use_bias=False)(x)
-    x = layers.BatchNormalization()(x)
     
     x = layers.Add()([x, shortcut])
     x = layers.LeakyReLU(0.2)(x)
@@ -186,7 +184,6 @@ def get_generator_model(noise_dim: int, num_classes: int, model_training_output_
     #   Conv (28×28)
     # -----------------------------
     x = layers.Conv2D(filters=64, kernel_size=(3, 3), padding="same", use_bias=False)(x)
-    x = layers.BatchNormalization()(x)
     x = layers.LeakyReLU(0.2)(x)
     
     # -----------------------------
